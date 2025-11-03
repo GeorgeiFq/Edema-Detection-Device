@@ -202,6 +202,27 @@ class App:
         self._mk_button(btns, "I2C Scan",          self.scan_i2c,               0, 4)
         self._mk_button(btns, "Help/menu",         lambda: self.send_cmd("help"), 0, 5)
 
+        # ===== LED Intensity sliders (0–255) =====
+        intensity = ttk.LabelFrame(btns, text="LED Intensity (0–255)")
+        intensity.grid(row=2, column=0, columnspan=6, sticky=E+W, pady=(8,0))
+        
+        self._led_sliders = []
+        for ch in range(4):
+            ttk.Label(intensity, text=f"LED {ch}").grid(row=0, column=ch*2, padx=4, sticky=E)
+            sv = StringVar(value="255")
+            s = ttk.Scale(intensity, from_=0, to=255,
+                          command=lambda v, c=ch, sv=sv: (
+                              sv.set(str(int(float(v)))),
+                              self._raw_send(f"pwm {c} {int(float(v))}")
+                          ))
+            s.set(255)
+            s.grid(row=0, column=ch*2+1, padx=4, sticky=E+W)
+            self._led_sliders.append((s, sv))
+        
+        for col in range(8):
+            intensity.grid_columnconfigure(col, weight=1)
+
+
         led_on = ttk.LabelFrame(btns, text="LED ON @255")
         led_on.grid(row=1, column=0, columnspan=3, sticky=E+W, pady=(8,0))
         for ch in range(4):
