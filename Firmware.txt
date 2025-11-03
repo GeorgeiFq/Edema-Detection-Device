@@ -1,4 +1,4 @@
-Can you modify this code so that it also prints the A1 AC changes like it does with the other AC changes, this is the VSCode let me know if you need to change the Arduino firmware code : import os
+import os
 import sys
 import csv
 import re
@@ -583,5 +583,6 @@ LED 0 AC Change : 33 mV
 LED 1 AC Change : 256 mV
 LED 2 AC Change : 137 mV
 LED 3 AC Change : 23 mV
+
 
 Make sure to distinguish between A0 which is pre diff amp, and A1 which is post diff amp
