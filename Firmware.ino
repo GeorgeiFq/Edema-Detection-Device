@@ -362,8 +362,10 @@ static void printMenu() {
     "5. Analog 1 reading        -> a1\n"
     "Extras: i2c scan           -> scan\n"
     "        help               -> h / help\n"
+    "        set PWM            -> pwm <ch 0..3> <0..255>\n"   // <<< added
   ));
 }
+
 
 static void processCommand(String line) {
   line.trim();
@@ -396,6 +398,31 @@ static void processCommand(String line) {
   }
   if (line == "h" || line == "help" || line == "menu") {
     printMenu();
+    return;
+  }
+  // --- Per-channel PWM: "pwm <ch> <0..255>" ---
+  if (line.startsWith("pwm")) {
+    // expected forms: "pwm 0 128", "pwm 3 255", etc.
+    int ch = -1, val = -1;
+
+    // quick parse without tokenizers
+    // find first space after "pwm"
+    int s1 = line.indexOf(' ');
+    if (s1 > 0) {
+      int s2 = line.indexOf(' ', s1 + 1);
+      if (s2 > s1) {
+        ch  = line.substring(s1 + 1, s2).toInt();
+        val = line.substring(s2 + 1).toInt();
+      }
+    }
+
+    if (ch >= 0 && ch < (int)NUM_CHANNELS && val >= 0 && val <= 255) {
+      tlcSetPWM((uint8_t)ch, (uint8_t)val);
+      Serial.print(F("PWM set: ch=")); Serial.print(ch);
+      Serial.print(F(" val=")); Serial.println(val);
+    } else {
+      Serial.println(F("Usage: pwm <ch 0..3> <0..255>"));
+    }
     return;
   }
 
