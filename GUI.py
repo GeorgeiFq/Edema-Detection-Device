@@ -6,8 +6,8 @@ import queue
 import threading
 from datetime import datetime
 from pathlib import Path
-from tkinter import Tk, ttk, StringVar, END, DISABLED, N, S, E, W
-from tkinter import messagebox, scrolledtext
+from tkinter import Tk, ttk, StringVar, END, DISABLED, N, S, E, W, messagebox
+from tkinter import scrolledtext
 
 # ====== User-tweakables ======
 BAUD = 115200
@@ -15,26 +15,24 @@ READ_TIMEOUT = 0.1  # seconds
 GUI_POLL_MS = 50    # ms
 SESSIONS_DIRNAME = "PD_Sessions"  # Desktop folder for CSVs
 
-# DAC clamp limits
-DAC_MIN_V = 0.0
-DAC_MAX_V = 4.9
-DAC_OFFSET_V = 0.01
-
 # ====== Known names (helpful labels) ======
 I2C_NAMES = {
     "0x40": "TLC59108 LED Driver",
+    "0x48": "MAX30205 Temp",
+    "0x49": "MAX30205 Temp",
+    "0x4A": "MAX30205 Temp",
+    "0x4B": "MAX30205 Temp",
+    "0x4C": "MAX30205 Temp",
+    "0x4D": "MAX30205 Temp",
+    "0x4E": "MAX30205 Temp",
     "0x4F": "MAX30205 Temp",
-    "0x4C": "DAC7571",
-    "0x4D": "DAC7571",
-    "0x4E": "DAC7571",
-    "0x4F": "DAC7571",
 }
 
 # ====== Parsing patterns (robust) ======
 PATTERNS = {
-    "autorun_begin": re.compile(r"^===\s*Full\s*Cycle\s*Run", re.I),
-    "autorun_end":   re.compile(r"^===\s*Autorun\s*complete\s*===\s*$", re.I),
-    "channel":       re.compile(r"^===\s*Channel\s+(\d+)\s*===\s*$", re.I),
+    "autorun_begin": re.compile(r"^===\s*(?:Full\s*Cycle\s*Run|Auto\-tuned\s*Autorun)", re.I),
+    "autorun_end":   re.compile(r"^\[INFO\]\s*Auto\-tuned\s*autorun\s*complete\.|^===\s*Autorun\s*complete\s*===\s*$", re.I),
+    "channel":       re.compile(r"^===\s*Channel\s+(\d+)\b.*$", re.I),
 
     "temp":          re.compile(r"^TEMP:\s*([\-NaN\d\.]+)", re.I),
     "temp_on":       re.compile(r"^TEMP\s*\(on\):\s*([\-NaN\d\.]+)", re.I),
@@ -49,13 +47,11 @@ PATTERNS = {
     "a1_on":         re.compile(r"^A1\s*\(on\):\s*([\-NaN\d\.]+)", re.I),
     "a1_post":       re.compile(r"^A1\s*\(post\-off\):\s*([\-NaN\d\.]+)", re.I),
 
+    "gain":          re.compile(r"^Gain\s*\(\s*ΔA1/ΔA0\s*\)\s*:\s*([\-NaN\d\.]+)", re.I),
     "dv":            re.compile(r"^ΔV\s*=\s*([\-NaN\d\.]+)", re.I),
 
     "i2c_found":      re.compile(r"^(.*)\s:\s0x([0-9A-Fa-f]{2})$"),
     "i2c_found_flex": re.compile(r"(?:found.*at\s*)?0x([0-9A-Fa-f]{2})", re.I),
-
-    "dac_ack":       re.compile(r"^DAC(?:7571)?\s*set\s*to\s*([\-NaN\d\.]+)\s*V", re.I),
-    "dac_raw_ack":   re.compile(r"^DAC\s*raw\s*0x([0-9A-Fa-f]{2})\s+(\d+)", re.I),
 }
 
 CSV_HEADERS = ["timestamp_iso", "command_sent", "event", "channel", "value", "units", "raw_line"]
@@ -100,7 +96,10 @@ class SerialWorker(threading.Thread):
 
     def send(self, s: str):
         if self.ser and self.ser.is_open:
-            self.ser.write(s.encode())
+            if isinstance(s, str):
+                self.ser.write(s.encode())
+            else:
+                self.ser.write(s)
 
     def stop(self):
         self._stop.set()
@@ -142,7 +141,7 @@ class CsvLogger:
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("Photodiode Board Controller — Serial GUI")
+        self.root.title("Photodiode Board Controller — Serial GUI (No DAC)")
         self.root.geometry("1040x680")
 
         # State
@@ -154,15 +153,10 @@ class App:
         # Autorun aggregation state
         self.autorun_active = False
         self._summary_emitted = False
-        self.autorun_dv = {}        # legacy A0 ΔV
-        self.autorun_dv_a0 = {}     # explicit A0 ΔV
-        self.autorun_dv_a1 = {}     # A1 ΔV (computed)
+        self.autorun_dv_a0 = {}     # A0 ΔV
+        self.autorun_dv_a1 = {}     # A1 ΔV
+        self.autorun_gain  = {}     # ΔA1/ΔA0
         self._a1_dark = {}          # channel -> last A1_dark
-
-        # DAC-from-A0 helpers
-        self.ref_margin_var = StringVar(value="0.500")
-        self._dac_done_for_channel = set()
-        self._last_a0_seen = {}
 
         # Devices seen (addr -> name)
         self.devices_seen = {}
@@ -187,36 +181,33 @@ class App:
         # ===== Commands row =====
         btns = ttk.LabelFrame(root, text="Commands", padding=8)
         btns.grid(row=1, column=0, sticky=E+W, padx=8, pady=(0,8))
-        self._mk_button(btns, "Full Cycle Run (r)", lambda: self.send_cmd("r"), 0, 0)
-        self._mk_button(btns, "Temp (t)",          lambda: self.send_cmd("t"), 0, 1)
-        self._mk_button(btns, "A0 (a0)",           lambda: self.send_cmd("a0"), 0, 2)
-        self._mk_button(btns, "A1 (a1)",           lambda: self.send_cmd("a1"), 0, 3)
-        self._mk_button(btns, "I2C Scan",          self.scan_i2c,               0, 4)
-        self._mk_button(btns, "Help/menu",         lambda: self.send_cmd("help"), 0, 5)
+
+        self._mk_button(btns, "Full Cycle Run (r)",   lambda: self.send_cmd("r"),   0, 0)
+        self._mk_button(btns, "Auto-tuned ΔA0 (r0t)", lambda: self.send_cmd("r0t"), 0, 1)
+        self._mk_button(btns, "Temp (t)",             lambda: self.send_cmd("t"),   0, 2)
+        self._mk_button(btns, "A0 (a0)",              lambda: self.send_cmd("a0"),  0, 3)
+        self._mk_button(btns, "A1 (a1)",              lambda: self.send_cmd("a1"),  0, 4)
+        self._mk_button(btns, "I²C Scan",             self.scan_i2c,                0, 5)
+        self._mk_button(btns, "Help/menu",            lambda: self.send_cmd("help"),0, 6)
 
         # ===== LED Intensity: Textboxes instead of sliders =====
         intensity = ttk.LabelFrame(btns, text="LED Intensity (0–255): press Enter to apply")
-        intensity.grid(row=2, column=0, columnspan=6, sticky=E+W, pady=(8,0))
+        intensity.grid(row=2, column=0, columnspan=7, sticky=E+W, pady=(8,0))
 
         self._led_vars = []
         for ch in range(4):
             ttk.Label(intensity, text=f"LED {ch}").grid(row=0, column=ch*3, padx=(4,2), sticky=E)
-            var = StringVar(value="0")  # default 0, no send at startup
+            var = StringVar(value="0")
             ent = ttk.Entry(intensity, textvariable=var, width=6, justify="right")
             ent.grid(row=0, column=ch*3+1, padx=(0,2), sticky=W)
-
-            # Bind Enter to apply
             ent.bind("<Return>", lambda e, c=ch: self._apply_pwm_from_entry(c))
-            # Optional Set button
             btn = ttk.Button(intensity, text="Set", command=lambda c=ch: self._apply_pwm_from_entry(c))
             btn.grid(row=0, column=ch*3+2, padx=(0,6), sticky=W)
-
             self._led_vars.append(var)
-
         for col in range(12):
             intensity.grid_columnconfigure(col, weight=1)
 
-        # Quick OFF/ON buttons (ON uses 255 explicitly)
+        # Quick OFF/ON buttons (ON uses 255)
         led_on = ttk.LabelFrame(btns, text="LED ON @255")
         led_on.grid(row=1, column=0, columnspan=3, sticky=E+W, pady=(8,0))
         for ch in range(4):
@@ -227,44 +218,9 @@ class App:
         for ch in range(4):
             self._mk_button(led_off, f"LED {ch} OFF", lambda c=ch: self._set_and_send_pwm(c, 0), 0, ch)
 
-        # ===== DAC panel =====
-        dac = ttk.LabelFrame(root, text="DAC7571 — Set Output", padding=8)
-        dac.grid(row=2, column=0, sticky=E+W, padx=8, pady=(0,8))
-
-        ttk.Label(dac, text="Address:").grid(row=0, column=0, sticky=E, padx=4, pady=2)
-        self.dac_addr_var = StringVar(value="")
-        self.dac_addr_combo = ttk.Combobox(dac, textvariable=self.dac_addr_var, width=10, state="normal")
-        self.dac_addr_combo["values"] = ["", "0x4C", "0x4D", "0x4E", "0x4F"]
-        self.dac_addr_combo.grid(row=0, column=1, sticky=W, padx=4, pady=2)
-
-        ttk.Label(dac, text="Voltage (V):").grid(row=0, column=2, sticky=E, padx=4, pady=2)
-        self.dac_volt_var = StringVar(value="2.500")
-        volt_entry = ttk.Entry(dac, textvariable=self.dac_volt_var, width=10)
-        volt_entry.grid(row=0, column=3, sticky=W, padx=4, pady=2)
-
-        ttk.Label(dac, text="Ref margin (V):").grid(row=0, column=5, sticky=E, padx=4, pady=2)
-        self.ref_margin_var = getattr(self, "ref_margin_var", StringVar(value="0.500"))
-        ref_entry = ttk.Entry(dac, textvariable=self.ref_margin_var, width=10)
-        ref_entry.grid(row=0, column=6, sticky=W, padx=4, pady=2)
-
-        self.btn_dac_set = ttk.Button(dac, text="Set DAC (Volts)", command=self._send_dac_volts)
-        self.btn_dac_set.grid(row=0, column=4, sticky=W, padx=6, pady=2)
-
-        ttk.Label(dac, text="Raw 12-bit code:").grid(row=1, column=0, sticky=E, padx=4, pady=2)
-        self.dac_raw_code_var = StringVar(value="")
-        raw_entry = ttk.Entry(dac, textvariable=self.dac_raw_code_var, width=10)
-        raw_entry.grid(row=1, column=1, sticky=W, padx=4, pady=2)
-
-        self.btn_dac_raw = ttk.Button(dac, text="Send Raw Code", command=self._send_dac_raw)
-        self.btn_dac_raw.grid(row=1, column=2, sticky=W, padx=6, pady=2)
-
-        ttk.Label(dac, text="Detected DAC(s):").grid(row=1, column=3, sticky=E, padx=4, pady=2)
-        self.detected_dac_var = StringVar(value="(none)")
-        ttk.Label(dac, textvariable=self.detected_dac_var).grid(row=1, column=4, sticky=W, padx=4, pady=2)
-
         # ===== Devices panel =====
         devs = ttk.LabelFrame(root, text="I²C Devices (from last scan)", padding=8)
-        devs.grid(row=3, column=0, sticky=E+W, padx=8, pady=(0,8))
+        devs.grid(row=2, column=0, sticky=E+W, padx=8, pady=(0,8))
         cols = ("addr", "name")
         self.devs_tree = ttk.Treeview(devs, columns=cols, show="headings", height=6)
         self.devs_tree.heading("addr", text="Address")
@@ -275,12 +231,12 @@ class App:
         devs.grid_columnconfigure(0, weight=1)
 
         # ===== Console =====
-        self.console = scrolledtext.ScrolledText(root, wrap="word", height=16)
-        self.console.grid(row=4, column=0, sticky=N+S+E+W, padx=8, pady=(0,8))
+        self.console = scrolledtext.ScrolledText(root, wrap="word", height=18)
+        self.console.grid(row=3, column=0, sticky=N+S+E+W, padx=8, pady=(0,8))
         self._append_console(self._append_notice)
 
         # Layout stretch
-        root.grid_rowconfigure(4, weight=1)
+        root.grid_rowconfigure(3, weight=1)
         root.grid_columnconfigure(0, weight=1)
 
         # Poll serial
@@ -331,18 +287,20 @@ class App:
         self.btn_disconnect.config(state=DISABLED)
 
     def send_cmd(self, cmd: str):
-        if cmd.strip().lower() == "r":
-            self.autorun_active = True
-            self.autorun_dv.clear()
-            self.autorun_dv_a0.clear()
-            self.autorun_dv_a1.clear()
-            self._a1_dark.clear()
-            self._dac_done_for_channel.clear()
-            self._last_a0_seen.clear()
-
         if not self.serial_worker:
             messagebox.showwarning("Not Connected", "Connect to a serial port first.")
             return
+
+        lc = cmd.strip().lower()
+        # Reset autorun aggregation at the start of r or r0t
+        if lc in ("r", "r0t"):
+            self.autorun_active = True
+            self.autorun_dv_a0.clear()
+            self.autorun_dv_a1.clear()
+            self.autorun_gain.clear()
+            self._a1_dark.clear()
+            self._summary_emitted = False
+
         line = cmd.strip() + "\n"
         try:
             self.serial_worker.send(line)
@@ -354,7 +312,6 @@ class App:
     def scan_i2c(self):
         self.devices_seen.clear()
         self._refresh_devices_panel()
-        self.detected_dac_var.set("(scanning...)")
         self.send_cmd("scan")
 
     def _poll_serial(self):
@@ -388,72 +345,61 @@ class App:
         self.csv.close()
         self.root.destroy()
 
-    # --- DAC controls ---
-    def _send_dac_volts(self):
-        addr = self.dac_addr_var.get().strip()
-        vtxt = self.dac_volt_var.get().strip()
-        if not vtxt:
-            messagebox.showwarning("DAC Voltage", "Enter a target voltage, e.g., 2.500")
+    # ---- PWM helpers ----
+    def _apply_pwm_from_entry(self, ch: int):
+        txt = self._led_vars[ch].get().strip()
+        if txt == "":
+            messagebox.showwarning("PWM", f"Enter a value for LED {ch} (0–255).")
             return
         try:
-            float(vtxt)
+            val = int(float(txt))
         except ValueError:
-            messagebox.showwarning("DAC Voltage", "Voltage must be a number.")
+            messagebox.showwarning("PWM", f"Invalid value '{txt}' for LED {ch}. Use 0–255.")
             return
-
-        if addr:
-            self._raw_send(f"dac {addr} {vtxt}")
-        else:
-            self._raw_send(f"dac {vtxt}")
-
-    def _send_dac_raw(self):
-        addr = self.dac_addr_var.get().strip()
-        code = self.dac_raw_code_var.get().strip()
-        if not addr:
-            messagebox.showwarning("DAC Raw", "Enter/select a DAC I²C address (e.g., 0x4C).")
+        if val < 0 or val > 255:
+            messagebox.showwarning("PWM", f"Out of range for LED {ch}: {val}. Use 0–255.")
             return
-        if not code.isdigit():
-            messagebox.showwarning("DAC Raw", "Raw code must be an integer (0–4095).")
-            return
-        self._raw_send(f"dac raw {addr} {code}")
+        self._led_vars[ch].set(str(val))
+        self._raw_send(f"pwm {ch} {val}")
 
+    def _set_and_send_pwm(self, ch: int, val: int):
+        self._led_vars[ch].set(str(val))
+        self._raw_send(f"pwm {ch} {val}")
+
+    # ---- Raw sender ----
     def _raw_send(self, cmdline: str):
         if not self.serial_worker:
             return
         try:
-            self.serial_worker.send((cmdline.strip() + "\n").encode() if isinstance(cmdline, bytes) else (cmdline.strip() + "\n"))
+            payload = (cmdline.strip() + "\n")
+            self.serial_worker.send(payload)
             self._append_console(f"> {cmdline.strip()}\n")
+            self.csv.set_last_command(cmdline.strip())
         except Exception as e:
             self._append_console(f"[ERROR] send failed: {e}\n")
 
-    # --- Parsing + logging ---
+    # ---- Parsing + logging ----
     def _handle_line(self, raw: str):
-        # Autorun begin
-        m = PATTERNS["autorun_begin"].match(raw)
-        if m:
+        # Autorun begin?
+        if PATTERNS["autorun_begin"].match(raw):
             self.autorun_active = True
-            self.autorun_dv.clear()
             self.autorun_dv_a0.clear()
             self.autorun_dv_a1.clear()
+            self.autorun_gain.clear()
             self._a1_dark.clear()
-            self._dac_done_for_channel.clear()
-            self._last_a0_seen.clear()
             self.csv.log("autorun_begin", None, None, "", raw)
             self._summary_emitted = False
+            self._append_console(raw + "\n")
             return
 
-        # Autorun end
-        m = PATTERNS["autorun_end"].match(raw)
-        if m:
-            if self._summary_emitted:
-                return
-            self._summary_emitted = True
-            self._emit_autorun_summary()
+        # Autorun end?
+        if PATTERNS["autorun_end"].match(raw):
+            if not self._summary_emitted:
+                self._emit_autorun_summary()
+                self._summary_emitted = True
             self.autorun_active = False
-            self._dac_done_for_channel.clear()
-            self._last_a0_seen.clear()
-            self._a1_dark.clear()
             self.csv.log("autorun_end", None, None, "", raw)
+            self._append_console(raw + "\n")
             return
 
         self._append_console(raw + "\n")
@@ -464,7 +410,6 @@ class App:
             self.current_channel = int(m.group(1))
             self.csv.log("channel", self.current_channel, "", "", raw)
             if self.current_channel is not None:
-                self._last_a0_seen.pop(self.current_channel, None)
                 self._a1_dark.pop(self.current_channel, None)
             return
 
@@ -488,10 +433,6 @@ class App:
             if m:
                 val = self._to_float_or_blank(m.group(1))
                 self.csv.log(event, self.current_channel, val, "V", raw)
-                if self.autorun_active and self.current_channel is not None and isinstance(val, float):
-                    self._last_a0_seen[self.current_channel] = val
-                    if key == "a0_dark":
-                        self._maybe_set_dac_from_a0_dark(self.current_channel, val)
                 return
 
         # A1 flavors
@@ -509,24 +450,25 @@ class App:
                             self.autorun_dv_a1[self.current_channel] = (val - dark)
                 return
 
-        # A1 plain
-        m = PATTERNS["a1"].match(raw)
-        if m:
-            val = self._to_float_or_blank(m.group(1))
-            self.csv.log("A1", self.current_channel, val, "V", raw)
-            return
-
         # ΔV (A0 / pre-diff from firmware)
         m = PATTERNS["dv"].match(raw)
         if m:
             val = self._to_float_or_blank(m.group(1))
-            self.csv.log("deltaV", self.current_channel, val, "V", raw)
+            self.csv.log("deltaV_A0", self.current_channel, val, "V", raw)
             if self.autorun_active and self.current_channel is not None and isinstance(val, float):
-                self.autorun_dv[self.current_channel] = val
                 self.autorun_dv_a0[self.current_channel] = val
             return
 
-        # I2C scan (strict)
+        # GAIN line (ΔA1/ΔA0)
+        m = PATTERNS["gain"].match(raw)
+        if m:
+            val = self._to_float_or_blank(m.group(1))
+            self.csv.log("gain_delta", self.current_channel, val, "", raw)
+            if self.autorun_active and self.current_channel is not None and isinstance(val, float):
+                self.autorun_gain[self.current_channel] = val
+            return
+
+        # I2C (strict)
         m = PATTERNS["i2c_found"].match(raw)
         if m:
             addr = f"0x{m.group(2).upper()}"
@@ -536,26 +478,13 @@ class App:
             self.csv.log("i2c_device", None, addr, name, raw)
             return
 
-        # I2C scan (flex)
+        # I2C (flex)
         m = PATTERNS["i2c_found_flex"].search(raw)
         if m:
             addr = f"0x{m.group(1).upper()}"
             name = I2C_NAMES.get(addr, "I2C device")
             self._record_i2c_device(addr, name)
             self.csv.log("i2c_device", None, addr, name, raw)
-            return
-
-        # DAC acks
-        m = PATTERNS["dac_ack"].match(raw)
-        if m:
-            v = self._to_float_or_blank(m.group(1))
-            self.csv.log("dac_set_volts", None, v, "V", raw)
-            return
-        m = PATTERNS["dac_raw_ack"].match(raw)
-        if m:
-            addr = f"0x{m.group(1).upper()}"
-            code = m.group(2)
-            self.csv.log("dac_set_raw", None, f"{addr}:{code}", "", raw)
             return
 
         # Warnings/errors
@@ -565,9 +494,6 @@ class App:
     def _record_i2c_device(self, addr: str, name: str):
         self.devices_seen[addr] = name
         self._refresh_devices_panel()
-        if name.lower().startswith("dac"):
-            dacs = [a for a,n in self.devices_seen.items() if n.lower().startswith("dac")]
-            self.detected_dac_var.set(", ".join(sorted(dacs)))
 
     def _refresh_devices_panel(self):
         for row in self.devs_tree.get_children():
@@ -576,71 +502,40 @@ class App:
             self.devs_tree.insert("", END, values=(addr, self.devices_seen[addr]))
 
     def _emit_autorun_summary(self):
+        # A0 summary
         if not self.autorun_dv_a0:
-            self._append_console("[SUMMARY] No ΔV values captured.\n")
+            self._append_console("[SUMMARY] No ΔV(A0) values captured.\n")
             self.csv.log("summary", None, "none", "", "no deltaV captured")
         else:
             self._append_console("\n[SUMMARY] Full Cycle Run — AC Change per LED (A0: pre-diff amp)\n")
             for ch in sorted(self.autorun_dv_a0.keys()):
                 dv_v = self.autorun_dv_a0[ch]
-                dv_mv_str = self._format_mv(dv_v)
-                line = f"LED {ch} AC Change : {dv_mv_str}"
+                dv_mv = f"{dv_v*1000:.0f} mV"
+                line = f"LED {ch} AC Change : {dv_mv}"
                 self._append_console(line + "\n")
                 self.csv.log("summary_ac_change_A0", ch, round(dv_v * 1000.0, 3), "mV", line)
             self._append_console("\n")
 
+        # A1 summary
         if self.autorun_dv_a1:
             self._append_console("[SUMMARY] Full Cycle Run — AC Change per LED (A1: post-diff amp)\n")
             for ch in sorted(self.autorun_dv_a1.keys()):
                 dv_v = self.autorun_dv_a1[ch]
-                dv_mv_str = self._format_mv(dv_v)
-                line = f"LED {ch} AC Change : {dv_mv_str}"
+                dv_mv = f"{dv_v*1000:.0f} mV"
+                line = f"LED {ch} AC Change : {dv_mv}"
                 self._append_console(line + "\n")
                 self.csv.log("summary_ac_change_A1", ch, round(dv_v * 1000.0, 3), "mV", line)
             self._append_console("\n")
 
-    # ---- New helpers for textbox PWM ----
-    def _apply_pwm_from_entry(self, ch: int):
-        """Validate entry value and send pwm command if valid."""
-        txt = self._led_vars[ch].get().strip()
-        if txt == "":
-            messagebox.showwarning("PWM", f"Enter a value for LED {ch} (0–255).")
-            return
-        try:
-            val = int(float(txt))
-        except ValueError:
-            messagebox.showwarning("PWM", f"Invalid value '{txt}' for LED {ch}. Use 0–255.")
-            return
-        if val < 0 or val > 255:
-            messagebox.showwarning("PWM", f"Out of range for LED {ch}: {val}. Use 0–255.")
-            return
-        self._led_vars[ch].set(str(val))  # normalize
-        self._raw_send(f"pwm {ch} {val}")
-
-    def _set_and_send_pwm(self, ch: int, val: int):
-        """Update entry and send PWM (used by quick OFF/ON buttons)."""
-        self._led_vars[ch].set(str(val))
-        self._raw_send(f"pwm {ch} {val}")
-
-    # ---- New helper: drive DAC from A0 ----
-    def _maybe_set_dac_from_a0_dark(self, channel: int, a0_dark_volts: float):
-        if channel in self._dac_done_for_channel:
-            return
-        try:
-            user_margin = float(self.ref_margin_var.get().strip())
-        except Exception:
-            user_margin = 0.5
-        target = a0_dark_volts - user_margin
-        if target < DAC_MIN_V: target = DAC_MIN_V
-        if target > DAC_MAX_V: target = DAC_MAX_V
-
-        addr = self.dac_addr_var.get().strip()
-        cmd = f"dac {addr} {target:.3f}" if addr else f"dac {target:.3f}"
-        self._raw_send(cmd)
-
-        self._dac_done_for_channel.add(channel)
-        self.csv.log("dac_set_for_channel", channel, round(target, 4), "V",
-                     f"DAC set to {target:.3f} V for channel {channel} (A0_dark={a0_dark_volts:.3f} V)")
+        # Gain summary (ΔA1/ΔA0)
+        if self.autorun_gain:
+            self._append_console("[SUMMARY] Full Cycle Run — Gain per LED (ΔA1/ΔA0)\n")
+            for ch in sorted(self.autorun_gain.keys()):
+                g = self.autorun_gain[ch]
+                line = f"LED {ch} Gain : {g:.3f}"
+                self._append_console(line + "\n")
+                self.csv.log("summary_gain", ch, g, "", line)
+            self._append_console("\n")
 
     # ---- Utils ----
     @staticmethod
@@ -651,13 +546,6 @@ class App:
             return float(s)
         except Exception:
             return ""
-
-    @staticmethod
-    def _format_mv(v_volts: float) -> str:
-        try:
-            return f"{v_volts*1000:.0f} mV"
-        except Exception:
-            return "N/A"
 
 def main():
     root = Tk()
