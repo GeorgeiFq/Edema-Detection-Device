@@ -52,6 +52,11 @@ PATTERNS = {
 
     "i2c_found":      re.compile(r"^(.*)\s:\s0x([0-9A-Fa-f]{2})$"),
     "i2c_found_flex": re.compile(r"(?:found.*at\s*)?0x([0-9A-Fa-f]{2})", re.I),
+
+    # gslope-specific
+    "gslope_begin":    re.compile(r"^===\s*gslope\s*ch\s+(\d+)\s*===", re.I),
+    "gslope_point":    re.compile(r"^PWM\s+(\d+).*?A0_on:\s*([\-.\d]+).*?A1_on:\s*([\-.\d]+).*?dA0:\s*([\-.\d]+).*?dA1:\s*([\-.\d]+)", re.I),
+    "gslope_result":   re.compile(r"^gslope\s*result\s*—\s*slope:\s*([\-.\d]+)\s*,\s*intercept:\s*([\-.\d]+)\s*,\s*R\^2:\s*([\-.\d]+)", re.I),
 }
 
 CSV_HEADERS = ["timestamp_iso", "command_sent", "event", "channel", "value", "units", "raw_line"]
@@ -142,7 +147,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Photodiode Board Controller — Serial GUI (No DAC)")
-        self.root.geometry("1040x680")
+        self.root.geometry("1120x740")
 
         # State
         self.serial_worker = None
@@ -157,6 +162,9 @@ class App:
         self.autorun_dv_a1 = {}     # A1 ΔV
         self.autorun_gain  = {}     # ΔA1/ΔA0
         self._a1_dark = {}          # channel -> last A1_dark
+
+        # gslope state (for parsing)
+        self._gslope_current_ch = None
 
         # Devices seen (addr -> name)
         self.devices_seen = {}
@@ -189,6 +197,26 @@ class App:
         self._mk_button(btns, "A1 (a1)",              lambda: self.send_cmd("a1"),  0, 4)
         self._mk_button(btns, "I²C Scan",             self.scan_i2c,                0, 5)
         self._mk_button(btns, "Help/menu",            lambda: self.send_cmd("help"),0, 6)
+
+        # ===== gslope controls =====
+        gs = ttk.LabelFrame(btns, text="gslope (linear fit ΔA1 vs ΔA0)")
+        gs.grid(row=3, column=0, columnspan=7, sticky=E+W, pady=(10,0))
+
+        ttk.Label(gs, text="Channel:").grid(row=0, column=0, padx=(4,4), sticky=E)
+        self.gs_ch_var = StringVar(value="all")
+        self.gs_ch_combo = ttk.Combobox(gs, textvariable=self.gs_ch_var, width=6, state="readonly")
+        self.gs_ch_combo["values"] = ["all","0","1","2","3"]
+        self.gs_ch_combo.grid(row=0, column=1, padx=(0,12), sticky=W)
+
+        ttk.Label(gs, text="PWM list (CSV, optional):").grid(row=0, column=2, padx=(4,4), sticky=E)
+        self.gs_pwm_var = StringVar(value="120,160,200,240")
+        self.gs_pwm_entry = ttk.Entry(gs, textvariable=self.gs_pwm_var, width=24)
+        self.gs_pwm_entry.grid(row=0, column=3, padx=(0,12), sticky=W)
+
+        self._mk_button(gs, "Run gslope", self._run_gslope_click, 0, 4)
+
+        for c in range(5):
+            gs.grid_columnconfigure(c, weight=1)
 
         # ===== LED Intensity: Textboxes instead of sliders =====
         intensity = ttk.LabelFrame(btns, text="LED Intensity (0–255): press Enter to apply")
@@ -231,7 +259,7 @@ class App:
         devs.grid_columnconfigure(0, weight=1)
 
         # ===== Console =====
-        self.console = scrolledtext.ScrolledText(root, wrap="word", height=18)
+        self.console = scrolledtext.ScrolledText(root, wrap="word", height=22)
         self.console.grid(row=3, column=0, sticky=N+S+E+W, padx=8, pady=(0,8))
         self._append_console(self._append_notice)
 
@@ -314,6 +342,23 @@ class App:
         self._refresh_devices_panel()
         self.send_cmd("scan")
 
+    def _run_gslope_click(self):
+        """
+        Build and send the appropriate 'gslope' command from controls.
+        """
+        ch = self.gs_ch_var.get().strip().lower()
+        pwm_csv = self.gs_pwm_var.get().strip().replace(" ", "")
+        # Determine command shape
+        if ch == "all" and (pwm_csv == "" or pwm_csv.lower() == "default"):
+            cmd = "gslope"
+        elif ch == "all" and pwm_csv:
+            cmd = f"gslope {pwm_csv}"
+        elif ch in ("0","1","2","3") and (pwm_csv == "" or pwm_csv.lower() == "default"):
+            cmd = f"gslope {ch}"
+        else:
+            cmd = f"gslope {ch} {pwm_csv}"
+        self.send_cmd(cmd)
+
     def _poll_serial(self):
         try:
             while True:
@@ -380,6 +425,39 @@ class App:
 
     # ---- Parsing + logging ----
     def _handle_line(self, raw: str):
+        # gslope begin?
+        m = PATTERNS["gslope_begin"].match(raw)
+        if m:
+            self._gslope_current_ch = int(m.group(1))
+            self.csv.log("gslope_begin", self._gslope_current_ch, None, "", raw)
+            self._append_console(raw + "\n")
+            return
+
+        # gslope point
+        m = PATTERNS["gslope_point"].match(raw)
+        if m:
+            pwm = m.group(1); a0_on = m.group(2); a1_on = m.group(3); dA0 = m.group(4); dA1 = m.group(5)
+            ch = self._gslope_current_ch if self._gslope_current_ch is not None else ""
+            self.csv.log("gslope_point_pwm", ch, int(pwm), "", raw)
+            self.csv.log("gslope_point_dA0", ch, float(dA0), "V", raw)
+            self.csv.log("gslope_point_dA1", ch, float(dA1), "V", raw)
+            self._append_console(raw + "\n")
+            return
+
+        # gslope result
+        m = PATTERNS["gslope_result"].match(raw)
+        if m:
+            slope = float(m.group(1))
+            intercept = float(m.group(2))
+            r2 = float(m.group(3))
+            ch = self._gslope_current_ch if self._gslope_current_ch is not None else ""
+            self.csv.log("gslope_slope", ch, slope, "", raw)
+            self.csv.log("gslope_intercept", ch, intercept, "V", raw)
+            self.csv.log("gslope_r2", ch, r2, "", raw)
+            self._append_console(raw + "\n")
+            # do not clear _gslope_current_ch yet; another channel may follow with new header
+            return
+
         # Autorun begin?
         if PATTERNS["autorun_begin"].match(raw):
             self.autorun_active = True
