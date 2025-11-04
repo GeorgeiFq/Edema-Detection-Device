@@ -18,6 +18,8 @@
 #include <Wire.h>
 #include <math.h>   // fabs/fabsf/lround/isnan
 
+//November 4th, 10x version
+
 // =================== User Config ===================
 #define VREF_VOLTS 5.0f           // Arduino analog reference (UNO default 5.0 V)
 #define A_SAMPLES  16             // ADC oversamples per reading
