@@ -59,8 +59,6 @@ PATTERNS = {
     "gslope_result":   re.compile(r"^gslope\s*result\s*—\s*slope:\s*([\-.\d]+)\s*,\s*intercept:\s*([\-.\d]+)\s*,\s*R\^2:\s*([\-.\d]+)", re.I),
 }
 
-CSV_HEADERS = ["timestamp_iso", "command_sent", "event", "channel", "value", "units", "raw_line"]
-
 # ====== Serial tools ======
 def list_serial_ports():
     try:
@@ -109,8 +107,17 @@ class SerialWorker(threading.Thread):
     def stop(self):
         self._stop.set()
 
-# ====== CSV Logger ======
-class CsvLogger:
+# ====== Data Collection Template CSV Writer ======
+class TemplateCsvLogger:
+    """
+    Writes CSV with header layout matching 'Data Collection Template.xlsx':
+
+    Columns (wide format):
+    Run Index | Temperature | (LED Inactive) A0 LED0..LED3 | (LED Inactive) A1 LED0..LED3 |
+                                   (LED Active)  A0 LED0..LED3 | (LED Active)  A1 LED0..LED3
+    """
+    LED_LABELS = ["LED 0 - 1450 Far", "LED 1 - 1450 Close", "LED 2 - 1650 Close", "LED 3 - 1650 Far"]
+
     def __init__(self):
         desktop = Path.home() / "Desktop"
         target_dir = desktop / SESSIONS_DIRNAME
@@ -119,24 +126,85 @@ class CsvLogger:
         self.path = target_dir / f"pd_session_{ts}.csv"
         self._file = open(self.path, "w", newline="", encoding="utf-8")
         self.writer = csv.writer(self._file)
-        self.writer.writerow(CSV_HEADERS)
-        self._file.flush()
-        self.last_command = ""
+        self._write_template_headers()
+        self.run_index = -1  # will start at 0 on first begin_run
 
-    def set_last_command(self, cmd: str):
-        self.last_command = cmd
+        # current row cache
+        self._row = None
 
-    def log(self, event, channel, value, units, raw_line):
-        self.writer.writerow([
-            datetime.now().isoformat(timespec="seconds"),
-            self.last_command,
-            event,
-            channel if channel is not None else "",
-            value if value is not None else "",
-            units or "",
-            raw_line
-        ])
+    def _write_template_headers(self):
+        # Header row 1 (group labels)
+        hdr1 = [
+            "Run Index", "Temperature",
+            "LED Inactive", "", "", "",  # A0 (pre) x4
+            "", "", "", "",              # A1 (post) x4
+            "LED Active",  "", "", "",   # A0 (pre) x4
+            "", "", "", ""               # A1 (post) x4
+        ]
+        # Header row 2 (sub-headers: A0/A1 descriptors placed at block starts)
+        hdr2 = [
+            "", "",
+            "Analog 0 - Pre Differential Op-Amp", "", "", "",
+            "Analog 1 - Post Differential Op-Amp", "", "", "",
+            "Analog 0 - Pre Differential Op-Amp", "", "", "",
+            "Analog 1 - Post Differential Op-Amp", "", "", ""
+        ]
+        # Header row 3 (per-LED labels for each block)
+        leds = self.LED_LABELS
+        hdr3 = ["", ""] + leds + leds + leds + leds
+        self.writer.writerow(hdr1)
+        self.writer.writerow(hdr2)
+        self.writer.writerow(hdr3)
         self._file.flush()
+
+    def begin_run(self):
+        self.run_index += 1
+        # 2 (run, temp) + 16 value slots
+        self._row = [self.run_index, ""] + [""] * 16
+
+    def set_temperature(self, temp_c):
+        if self._row is not None:
+            self._row[1] = temp_c
+
+    def _slot_index(self, state: str, adc: str, ch: int) -> int:
+        """
+        Map (state, adc, ch) -> position in the 16-value payload (indexes 2..17 in full row).
+        state: 'dark' (LED Inactive) or 'on' (LED Active)
+        adc:   'A0' (pre) or 'A1' (post)
+        ch:    0..3
+        """
+        # Blocks of 4
+        # Order: Inactive(A0 0..3), Inactive(A1 0..3), Active(A0 0..3), Active(A1 0..3)
+        base = 2
+        if state == "dark" and adc == "A0":
+            offset = 0
+        elif state == "dark" and adc == "A1":
+            offset = 4
+        elif state == "on" and adc == "A0":
+            offset = 8
+        elif state == "on" and adc == "A1":
+            offset = 12
+        else:
+            raise ValueError("Bad slot mapping")
+        return base + offset + ch
+
+    def set_value(self, state: str, adc: str, ch: int, value):
+        if self._row is None:
+            return
+        try:
+            idx = self._slot_index(state, adc, ch)
+            self._row[idx] = value
+        except Exception:
+            pass
+
+    def finalize_run(self):
+        if self._row is None:
+            return
+        # Ensure empty strings instead of None
+        row = [("" if v is None else v) for v in self._row]
+        self.writer.writerow(row)
+        self._file.flush()
+        self._row = None
 
     def close(self):
         try: self._file.close()
@@ -152,7 +220,7 @@ class App:
         # State
         self.serial_worker = None
         self.line_queue = queue.Queue()
-        self.csv = CsvLogger()
+        self.csv = TemplateCsvLogger()
         self.current_channel = None
 
         # Autorun aggregation state
@@ -162,6 +230,8 @@ class App:
         self.autorun_dv_a1 = {}     # A1 ΔV
         self.autorun_gain  = {}     # ΔA1/ΔA0
         self._a1_dark = {}          # channel -> last A1_dark
+        self._a0_dark = {}          # channel -> last A0_dark
+        self._last_temp = ""        # last temp seen in a run
 
         # gslope state (for parsing)
         self._gslope_current_ch = None
@@ -327,12 +397,14 @@ class App:
             self.autorun_dv_a1.clear()
             self.autorun_gain.clear()
             self._a1_dark.clear()
+            self._a0_dark.clear()
             self._summary_emitted = False
+            self._last_temp = ""
+            self.csv.begin_run()
 
         line = cmd.strip() + "\n"
         try:
             self.serial_worker.send(line)
-            self.csv.set_last_command(cmd.strip())
             self._append_console(f"> {cmd.strip()}\n")
         except Exception as e:
             self._append_console(f"[ERROR] send failed: {e}\n")
@@ -343,12 +415,8 @@ class App:
         self.send_cmd("scan")
 
     def _run_gslope_click(self):
-        """
-        Build and send the appropriate 'gslope' command from controls.
-        """
         ch = self.gs_ch_var.get().strip().lower()
         pwm_csv = self.gs_pwm_var.get().strip().replace(" ", "")
-        # Determine command shape
         if ch == "all" and (pwm_csv == "" or pwm_csv.lower() == "default"):
             cmd = "gslope"
         elif ch == "all" and pwm_csv:
@@ -419,7 +487,6 @@ class App:
             payload = (cmdline.strip() + "\n")
             self.serial_worker.send(payload)
             self._append_console(f"> {cmdline.strip()}\n")
-            self.csv.set_last_command(cmdline.strip())
         except Exception as e:
             self._append_console(f"[ERROR] send failed: {e}\n")
 
@@ -429,54 +496,35 @@ class App:
         m = PATTERNS["gslope_begin"].match(raw)
         if m:
             self._gslope_current_ch = int(m.group(1))
-            self.csv.log("gslope_begin", self._gslope_current_ch, None, "", raw)
             self._append_console(raw + "\n")
             return
 
         # gslope point
         m = PATTERNS["gslope_point"].match(raw)
         if m:
-            pwm = m.group(1); a0_on = m.group(2); a1_on = m.group(3); dA0 = m.group(4); dA1 = m.group(5)
-            ch = self._gslope_current_ch if self._gslope_current_ch is not None else ""
-            self.csv.log("gslope_point_pwm", ch, int(pwm), "", raw)
-            self.csv.log("gslope_point_dA0", ch, float(dA0), "V", raw)
-            self.csv.log("gslope_point_dA1", ch, float(dA1), "V", raw)
             self._append_console(raw + "\n")
             return
 
         # gslope result
         m = PATTERNS["gslope_result"].match(raw)
         if m:
-            slope = float(m.group(1))
-            intercept = float(m.group(2))
-            r2 = float(m.group(3))
-            ch = self._gslope_current_ch if self._gslope_current_ch is not None else ""
-            self.csv.log("gslope_slope", ch, slope, "", raw)
-            self.csv.log("gslope_intercept", ch, intercept, "V", raw)
-            self.csv.log("gslope_r2", ch, r2, "", raw)
             self._append_console(raw + "\n")
-            # do not clear _gslope_current_ch yet; another channel may follow with new header
             return
 
         # Autorun begin?
         if PATTERNS["autorun_begin"].match(raw):
             self.autorun_active = True
-            self.autorun_dv_a0.clear()
-            self.autorun_dv_a1.clear()
-            self.autorun_gain.clear()
-            self._a1_dark.clear()
-            self.csv.log("autorun_begin", None, None, "", raw)
-            self._summary_emitted = False
             self._append_console(raw + "\n")
             return
 
         # Autorun end?
         if PATTERNS["autorun_end"].match(raw):
-            if not self._summary_emitted:
-                self._emit_autorun_summary()
-                self._summary_emitted = True
+            if self.autorun_active:
+                # finalize current run row
+                if self._last_temp != "":
+                    self.csv.set_temperature(self._last_temp)
+                self.csv.finalize_run()
             self.autorun_active = False
-            self.csv.log("autorun_end", None, None, "", raw)
             self._append_console(raw + "\n")
             return
 
@@ -486,134 +534,48 @@ class App:
         m = PATTERNS["channel"].match(raw)
         if m:
             self.current_channel = int(m.group(1))
-            self.csv.log("channel", self.current_channel, "", "", raw)
-            if self.current_channel is not None:
-                self._a1_dark.pop(self.current_channel, None)
+            # reset last-dark holders when channel changes
             return
 
         # TEMP (on)
         m = PATTERNS["temp_on"].match(raw)
         if m:
             val = self._to_float_or_blank(m.group(1))
-            self.csv.log("TEMP_on", self.current_channel, val, "C", raw)
+            if self.autorun_active and isinstance(val, float):
+                self._last_temp = val
             return
 
         # TEMP
         m = PATTERNS["temp"].match(raw)
         if m:
             val = self._to_float_or_blank(m.group(1))
-            self.csv.log("TEMP", self.current_channel, val, "C", raw)
+            if self.autorun_active and isinstance(val, float):
+                self._last_temp = val
             return
 
         # A0 flavors
-        for key, event in [("a0_dark","A0_dark"), ("a0_on","A0_on"), ("a0_post","A0_post"), ("a0","A0")]:
+        for key, state in [("a0_dark","dark"), ("a0_on","on")]:
             m = PATTERNS[key].match(raw)
             if m:
                 val = self._to_float_or_blank(m.group(1))
-                self.csv.log(event, self.current_channel, val, "V", raw)
+                if self.autorun_active and self.current_channel is not None and isinstance(val, float):
+                    self.csv.set_value(state, "A0", self.current_channel, val)
+                    if state == "dark":
+                        self._a0_dark[self.current_channel] = val
                 return
 
         # A1 flavors
-        for key, event in [("a1_dark","A1_dark"), ("a1_on","A1_on"), ("a1_post","A1_post")]:
+        for key, state in [("a1_dark","dark"), ("a1_on","on")]:
             m = PATTERNS[key].match(raw)
             if m:
                 val = self._to_float_or_blank(m.group(1))
-                self.csv.log(event, self.current_channel, val, "V", raw)
                 if self.autorun_active and self.current_channel is not None and isinstance(val, float):
-                    if key == "a1_dark":
+                    self.csv.set_value(state, "A1", self.current_channel, val)
+                    if state == "dark":
                         self._a1_dark[self.current_channel] = val
-                    elif key == "a1_on":
-                        dark = self._a1_dark.get(self.current_channel, "")
-                        if isinstance(dark, float):
-                            self.autorun_dv_a1[self.current_channel] = (val - dark)
                 return
 
-        # ΔV (A0 / pre-diff from firmware)
-        m = PATTERNS["dv"].match(raw)
-        if m:
-            val = self._to_float_or_blank(m.group(1))
-            self.csv.log("deltaV_A0", self.current_channel, val, "V", raw)
-            if self.autorun_active and self.current_channel is not None and isinstance(val, float):
-                self.autorun_dv_a0[self.current_channel] = val
-            return
-
-        # GAIN line (ΔA1/ΔA0)
-        m = PATTERNS["gain"].match(raw)
-        if m:
-            val = self._to_float_or_blank(m.group(1))
-            self.csv.log("gain_delta", self.current_channel, val, "", raw)
-            if self.autorun_active and self.current_channel is not None and isinstance(val, float):
-                self.autorun_gain[self.current_channel] = val
-            return
-
-        # I2C (strict)
-        m = PATTERNS["i2c_found"].match(raw)
-        if m:
-            addr = f"0x{m.group(2).upper()}"
-            name_hint = (m.group(1) or "").strip()
-            name = I2C_NAMES.get(addr, name_hint or "I2C device")
-            self._record_i2c_device(addr, name)
-            self.csv.log("i2c_device", None, addr, name, raw)
-            return
-
-        # I2C (flex)
-        m = PATTERNS["i2c_found_flex"].search(raw)
-        if m:
-            addr = f"0x{m.group(1).upper()}"
-            name = I2C_NAMES.get(addr, "I2C device")
-            self._record_i2c_device(addr, name)
-            self.csv.log("i2c_device", None, addr, name, raw)
-            return
-
-        # Warnings/errors
-        if raw.startswith("WARNING") or raw.startswith("[ERROR]"):
-            self.csv.log("message", self.current_channel, None, "", raw)
-
-    def _record_i2c_device(self, addr: str, name: str):
-        self.devices_seen[addr] = name
-        self._refresh_devices_panel()
-
-    def _refresh_devices_panel(self):
-        for row in self.devs_tree.get_children():
-            self.devs_tree.delete(row)
-        for addr in sorted(self.devices_seen.keys()):
-            self.devs_tree.insert("", END, values=(addr, self.devices_seen[addr]))
-
-    def _emit_autorun_summary(self):
-        # A0 summary
-        if not self.autorun_dv_a0:
-            self._append_console("[SUMMARY] No ΔV(A0) values captured.\n")
-            self.csv.log("summary", None, "none", "", "no deltaV captured")
-        else:
-            self._append_console("\n[SUMMARY] Full Cycle Run — AC Change per LED (A0: pre-diff amp)\n")
-            for ch in sorted(self.autorun_dv_a0.keys()):
-                dv_v = self.autorun_dv_a0[ch]
-                dv_mv = f"{dv_v*1000:.0f} mV"
-                line = f"LED {ch} AC Change : {dv_mv}"
-                self._append_console(line + "\n")
-                self.csv.log("summary_ac_change_A0", ch, round(dv_v * 1000.0, 3), "mV", line)
-            self._append_console("\n")
-
-        # A1 summary
-        if self.autorun_dv_a1:
-            self._append_console("[SUMMARY] Full Cycle Run — AC Change per LED (A1: post-diff amp)\n")
-            for ch in sorted(self.autorun_dv_a1.keys()):
-                dv_v = self.autorun_dv_a1[ch]
-                dv_mv = f"{dv_v*1000:.0f} mV"
-                line = f"LED {ch} AC Change : {dv_mv}"
-                self._append_console(line + "\n")
-                self.csv.log("summary_ac_change_A1", ch, round(dv_v * 1000.0, 3), "mV", line)
-            self._append_console("\n")
-
-        # Gain summary (ΔA1/ΔA0)
-        if self.autorun_gain:
-            self._append_console("[SUMMARY] Full Cycle Run — Gain per LED (ΔA1/ΔA0)\n")
-            for ch in sorted(self.autorun_gain.keys()):
-                g = self.autorun_gain[ch]
-                line = f"LED {ch} Gain : {g:.3f}"
-                self._append_console(line + "\n")
-                self.csv.log("summary_gain", ch, g, "", line)
-            self._append_console("\n")
+        # Other lines we ignore for template CSV (ΔV, gain, i2c, warnings) but keep in console
 
     # ---- Utils ----
     @staticmethod
