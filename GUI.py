@@ -15,6 +15,13 @@ READ_TIMEOUT = 0.1  # seconds
 GUI_POLL_MS = 50    # ms
 SESSIONS_DIRNAME = "PD_Sessions"  # Desktop folder for CSVs
 
+# XLSX options (for formulas + color coding)
+XLSX_ENABLE = True
+GAIN_TARGET = 10.0          # center of color scale (typical post/pre gain)
+GAIN_YELLOW_BAND = 1.0      # +/- window around target for mid color
+GAIN_MIN = 7.0              # low end (red)
+GAIN_MAX = 13.0             # high end (red)
+
 # ====== Known names (helpful labels) ======
 I2C_NAMES = {
     "0x40": "TLC59108 LED Driver",
@@ -49,9 +56,6 @@ PATTERNS = {
 
     "gain":          re.compile(r"^Gain\s*\(\s*ΔA1/ΔA0\s*\)\s*:\s*([\-NaN\d\.]+)", re.I),
     "dv":            re.compile(r"^ΔV\s*=\s*([\-NaN\d\.]+)", re.I),
-
-    "i2c_found":      re.compile(r"^(.*)\s:\s0x([0-9A-Fa-f]{2})$"),
-    "i2c_found_flex": re.compile(r"(?:found.*at\s*)?0x([0-9A-Fa-f]{2})", re.I),
 
     # gslope-specific
     "gslope_begin":    re.compile(r"^===\s*gslope\s*ch\s+(\d+)\s*===", re.I),
@@ -107,14 +111,11 @@ class SerialWorker(threading.Thread):
     def stop(self):
         self._stop.set()
 
-# ====== Data Collection Template CSV Writer ======
+# ====== Data Collection Template CSV/XLSX Writer ======
 class TemplateCsvLogger:
     """
-    Writes CSV with header layout matching 'Data Collection Template.xlsx':
-
-    Columns (wide format):
-    Run Index | Temperature | (LED Inactive) A0 LED0..LED3 | (LED Inactive) A1 LED0..LED3 |
-                                   (LED Active)  A0 LED0..LED3 | (LED Active)  A1 LED0..LED3
+    Writes CSV to match your template's layout and also (optionally) an XLSX
+    clone with formulas + color coding for gains.
     """
     LED_LABELS = ["LED 0 - 1450 Far", "LED 1 - 1450 Close", "LED 2 - 1650 Close", "LED 3 - 1650 Far"]
 
@@ -123,25 +124,29 @@ class TemplateCsvLogger:
         target_dir = desktop / SESSIONS_DIRNAME
         target_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.path = target_dir / f"pd_session_{ts}.csv"
-        self._file = open(self.path, "w", newline="", encoding="utf-8")
+        self.csv_path = target_dir / f"pd_session_{ts}.csv"
+        self.xlsx_path = target_dir / f"pd_session_{ts}.xlsx"
+
+        self._file = open(self.csv_path, "w", newline="", encoding="utf-8")
         self.writer = csv.writer(self._file)
         self._write_template_headers()
-        self.run_index = -1  # will start at 0 on first begin_run
-
-        # current row cache
+        self.run_index = -1  # starts at -1, begin_run() bumps to 0
         self._row = None
 
+        # store run rows in-memory so we can recompute summaries each autorun
+        self._run_rows = []  # list of full rows (len 18)
+
+    # --- header writing ---
     def _write_template_headers(self):
-        # Header row 1 (group labels)
+        # Row 1: group headers
         hdr1 = [
             "Run Index", "Temperature",
-            "LED Inactive", "", "", "",  # A0 (pre) x4
-            "", "", "", "",              # A1 (post) x4
-            "LED Active",  "", "", "",   # A0 (pre) x4
-            "", "", "", ""               # A1 (post) x4
+            "LED Inactive", "", "", "",               # A0 (pre) x4
+            "", "", "", "",                           # A1 (post) x4
+            "LED Active",  "", "", "",                # A0 (pre) x4
+            "", "", "", ""                            # A1 (post) x4
         ]
-        # Header row 2 (sub-headers: A0/A1 descriptors placed at block starts)
+        # Row 2: subheaders
         hdr2 = [
             "", "",
             "Analog 0 - Pre Differential Op-Amp", "", "", "",
@@ -149,32 +154,30 @@ class TemplateCsvLogger:
             "Analog 0 - Pre Differential Op-Amp", "", "", "",
             "Analog 1 - Post Differential Op-Amp", "", "", ""
         ]
-        # Header row 3 (per-LED labels for each block)
+        # Row 3: per-LED labels
         leds = self.LED_LABELS
         hdr3 = ["", ""] + leds + leds + leds + leds
+
         self.writer.writerow(hdr1)
         self.writer.writerow(hdr2)
         self.writer.writerow(hdr3)
         self._file.flush()
 
+    # --- run lifecycle ---
     def begin_run(self):
         self.run_index += 1
-        # 2 (run, temp) + 16 value slots
         self._row = [self.run_index, ""] + [""] * 16
 
     def set_temperature(self, temp_c):
         if self._row is not None:
             self._row[1] = temp_c
 
+    # slot mapping for values
     def _slot_index(self, state: str, adc: str, ch: int) -> int:
         """
-        Map (state, adc, ch) -> position in the 16-value payload (indexes 2..17 in full row).
-        state: 'dark' (LED Inactive) or 'on' (LED Active)
-        adc:   'A0' (pre) or 'A1' (post)
-        ch:    0..3
+        Map (state, adc, ch) -> absolute column index in the full row.
+        Columns (0-based): [Run, Temp, C..F A0_dark, G..J A1_dark, K..N A0_on, O..R A1_on]
         """
-        # Blocks of 4
-        # Order: Inactive(A0 0..3), Inactive(A1 0..3), Active(A0 0..3), Active(A1 0..3)
         base = 2
         if state == "dark" and adc == "A0":
             offset = 0
@@ -200,15 +203,186 @@ class TemplateCsvLogger:
     def finalize_run(self):
         if self._row is None:
             return
-        # Ensure empty strings instead of None
         row = [("" if v is None else v) for v in self._row]
         self.writer.writerow(row)
         self._file.flush()
+        self._run_rows.append(row)
         self._row = None
+
+    def write_summaries(self):
+        """
+        Append the 'Average' row and the 'Average Gain' row to the CSV,
+        and create/update an XLSX with formulas + color scale.
+        """
+        if not self._run_rows:
+            return
+
+        # Remove any prior summary rows, rebuild CSV cleanly
+        self._file.seek(0)
+        self._file.truncate(0)
+        self.writer = csv.writer(self._file)
+        self._write_template_headers()
+        for r in self._run_rows:
+            self.writer.writerow(r)
+
+        # Build averages (numeric columns only)
+        # Columns: 0 Run, 1 Temp, 2..17 are numeric strings/floats
+        cols = list(range(2, 18))
+        n = len(self._run_rows)
+        avgs = ["", ""] + []
+        # compute column-wise means safely
+        means = []
+        for c in cols:
+            vals = []
+            for r in self._run_rows:
+                v = r[c]
+                try:
+                    if v != "" and v is not None:
+                        vals.append(float(v))
+                except Exception:
+                    pass
+            means.append(sum(vals)/len(vals) if vals else "")
+        avg_row = ["Average", ""] + means
+        self.writer.writerow(avg_row)
+
+        # Average Gain row:
+        # Put gain values in A1 blocks only:
+        # G..J (cols 6..9): ratio-of-averages for dark => avg(A1_dark)/avg(A0_dark)
+        # O..R (cols 14..17): ratio-of-averages for on => avg(A1_on)/avg(A0_on)
+        ag = ["Average Gain", ""] + [""] * 16
+
+        # helper to take mean from the avg_row we just wrote (same positions)
+        def mean_at(col_index_zero_based):
+            v = avg_row[col_index_zero_based]
+            try:
+                return float(v)
+            except Exception:
+                return None
+
+        # Dark: C..F A0_dark -> indices 2..5 ; G..J A1_dark -> 6..9
+        for ch in range(4):
+            a0_mean = mean_at(2 + ch)
+            a1_mean = mean_at(6 + ch)
+            ag_val = (a1_mean / a0_mean) if (a0_mean and a1_mean is not None) else ""
+            ag[6 + ch] = ag_val  # place under A1_dark block
+
+        # On: K..N A0_on -> 10..13 ; O..R A1_on -> 14..17
+        for ch in range(4):
+            a0_mean = mean_at(10 + ch)
+            a1_mean = mean_at(14 + ch)
+            ag_val = (a1_mean / a0_mean) if (a0_mean and a1_mean is not None) else ""
+            ag[14 + ch] = ag_val  # place under A1_on block
+
+        self.writer.writerow(ag)
+        self._file.flush()
+
+        # Also create XLSX with formulas + colors if enabled
+        if XLSX_ENABLE:
+            try:
+                self._emit_xlsx_with_formulas()
+            except Exception as e:
+                # Do not crash the GUI if Excel build fails
+                print(f"[WARN] XLSX export failed: {e}")
 
     def close(self):
         try: self._file.close()
         except Exception: pass
+
+    # --- XLSX builder ---
+    def _emit_xlsx_with_formulas(self):
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+        from openpyxl.styles import Alignment
+        from openpyxl.formatting.rule import ColorScaleRule
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+
+        # write headers
+        headers = [
+            ["Run Index", "Temperature",
+             "LED Inactive", "", "", "",
+             "", "", "", "",
+             "LED Active", "", "", "",
+             "", "", "", ""],
+            ["", "",
+             "Analog 0 - Pre Differential Op-Amp", "", "", "",
+             "Analog 1 - Post Differential Op-Amp", "", "", "",
+             "Analog 0 - Pre Differential Op-Amp", "", "", "",
+             "Analog 1 - Post Differential Op-Amp", "", "", ""],
+            ["", ""] + self.LED_LABELS + self.LED_LABELS + self.LED_LABELS + self.LED_LABELS
+        ]
+        for r in headers:
+            ws.append(r)
+
+        # write run rows
+        for r in self._run_rows:
+            ws.append(r)
+
+        # append Average row with formulas
+        # data starts at row 4 (1-indexed), ends at row 3 + n
+        n = len(self._run_rows)
+        data_start = 4
+        data_end = 3 + n
+        avg_row_idx = data_end + 1
+        ag_row_idx = data_end + 2
+
+        ws.cell(row=avg_row_idx, column=1, value="Average")
+        ws.cell(row=avg_row_idx, column=2, value="")
+
+        # columns C..R => 3..18
+        for col in range(3, 19):
+            col_letter = get_column_letter(col)
+            ws.cell(row=avg_row_idx, column=col,
+                    value=f"=AVERAGE({col_letter}{data_start}:{col_letter}{data_end})")
+
+        # Average Gain row (ratios of averages)
+        ws.cell(row=ag_row_idx, column=1, value="Average Gain")
+        ws.cell(row=ag_row_idx, column=2, value="")
+
+        # Dark gains under G..J (6..9) => columns 7..10
+        # ratio-of-averages: avg(A1_dark)/avg(A0_dark)
+        # A0_dark C..F -> 3..6; A1_dark G..J -> 7..10
+        for ch in range(4):
+            a0_col = 3 + ch
+            a1_col = 7 + ch
+            a0_letter = get_column_letter(a0_col)
+            a1_letter = get_column_letter(a1_col)
+            ws.cell(row=ag_row_idx, column=a1_col,
+                    value=f"={a1_letter}{avg_row_idx}/{a0_letter}{avg_row_idx}")
+
+        # Active gains under O..R (columns 15..18)
+        # A0_on K..N -> 11..14; A1_on O..R -> 15..18
+        for ch in range(4):
+            a0_col = 11 + ch
+            a1_col = 15 + ch
+            a0_letter = get_column_letter(a0_col)
+            a1_letter = get_column_letter(a1_col)
+            ws.cell(row=ag_row_idx, column=a1_col,
+                    value=f"={a1_letter}{avg_row_idx}/{a0_letter}{avg_row_idx}")
+
+        # Pretty alignment for headers
+        for row in range(1, 4):
+            for col in range(1, 19):
+                ws.cell(row=row, column=col).alignment = Alignment(horizontal="center", vertical="center")
+
+        # Conditional formatting color scale for the gain cells:
+        # Dark gains -> G..J (cols 7..10); Active gains -> O..R (cols 15..18)
+        def add_gain_scale(col_start, col_end):
+            # 3-color scale centered at GAIN_TARGET ± band, clamped to [GAIN_MIN, GAIN_MAX]
+            rule = ColorScaleRule(
+                start_type='num', start_value=GAIN_MIN, start_color='F8696B',  # red
+                mid_type='num', mid_value=GAIN_TARGET, mid_color='FFEB84',     # yellow
+                end_type='num', end_value=GAIN_MAX, end_color='63BE7B'         # green
+            )
+            ws.conditional_formatting.add(f"{get_column_letter(col_start)}{ag_row_idx}:{get_column_letter(col_end)}{ag_row_idx}", rule)
+
+        add_gain_scale(7, 10)   # dark A1 gains
+        add_gain_scale(15, 18)  # active A1 gains
+
+        # Save xlsx
+        wb.save(self.xlsx_path)
 
 # ====== GUI App ======
 class App:
@@ -226,9 +400,6 @@ class App:
         # Autorun aggregation state
         self.autorun_active = False
         self._summary_emitted = False
-        self.autorun_dv_a0 = {}     # A0 ΔV
-        self.autorun_dv_a1 = {}     # A1 ΔV
-        self.autorun_gain  = {}     # ΔA1/ΔA0
         self._a1_dark = {}          # channel -> last A1_dark
         self._a0_dark = {}          # channel -> last A0_dark
         self._last_temp = ""        # last temp seen in a run
@@ -252,9 +423,9 @@ class App:
         self.btn_connect.grid(row=0, column=3, padx=(0,6))
         self.btn_disconnect = ttk.Button(top, text="Disconnect", command=self.disconnect, state=DISABLED)
         self.btn_disconnect.grid(row=0, column=4, padx=(0,6))
-        self.btn_open_csv = ttk.Button(top, text="Open CSV Folder", command=self.open_csv_folder)
+        self.btn_open_csv = ttk.Button(top, text="Open Output Folder", command=self.open_csv_folder)
         self.btn_open_csv.grid(row=0, column=5)
-        self._append_notice = f"[CSV] Logging to: {self.csv.path}\n"
+        self._append_notice = f"[CSV] Logging to: {self.csv.csv_path}\n"
 
         # ===== Commands row =====
         btns = ttk.LabelFrame(root, text="Commands", padding=8)
@@ -393,9 +564,6 @@ class App:
         # Reset autorun aggregation at the start of r or r0t
         if lc in ("r", "r0t"):
             self.autorun_active = True
-            self.autorun_dv_a0.clear()
-            self.autorun_dv_a1.clear()
-            self.autorun_gain.clear()
             self._a1_dark.clear()
             self._a0_dark.clear()
             self._summary_emitted = False
@@ -441,7 +609,7 @@ class App:
         self.console.see(END)
 
     def open_csv_folder(self):
-        folder = Path(self.csv.path).parent
+        folder = Path(self.csv.csv_path).parent
         try:
             os.startfile(folder)  # Windows
         except Exception:
@@ -451,9 +619,14 @@ class App:
                 else:
                     os.system(f"xdg-open '{folder}'")
             except Exception:
-                messagebox.showinfo("CSV Folder", f"Folder:\n{folder}")
+                messagebox.showinfo("Output Folder", f"Folder:\n{folder}")
 
     def on_close(self):
+        # write summaries one last time if we were mid-session and never emitted
+        try:
+            self.csv.write_summaries()
+        except Exception:
+            pass
         self.disconnect()
         self.csv.close()
         self.root.destroy()
@@ -479,16 +652,12 @@ class App:
         self._led_vars[ch].set(str(val))
         self._raw_send(f"pwm {ch} {val}")
 
-    # ---- Raw sender ----
-    def _raw_send(self, cmdline: str):
-        if not self.serial_worker:
-            return
-        try:
-            payload = (cmdline.strip() + "\n")
-            self.serial_worker.send(payload)
-            self._append_console(f"> {cmdline.strip()}\n")
-        except Exception as e:
-            self._append_console(f"[ERROR] send failed: {e}\n")
+    # ---- Device list ----
+    def _refresh_devices_panel(self):
+        for i in self.devs_tree.get_children():
+            self.devs_tree.delete(i)
+        for addr, name in sorted(self.devices_seen.items()):
+            self.devs_tree.insert("", "end", values=(addr, name))
 
     # ---- Parsing + logging ----
     def _handle_line(self, raw: str):
@@ -520,10 +689,11 @@ class App:
         # Autorun end?
         if PATTERNS["autorun_end"].match(raw):
             if self.autorun_active:
-                # finalize current run row
                 if self._last_temp != "":
                     self.csv.set_temperature(self._last_temp)
                 self.csv.finalize_run()
+                # refresh summaries every completed autorun
+                self.csv.write_summaries()
             self.autorun_active = False
             self._append_console(raw + "\n")
             return
@@ -534,7 +704,6 @@ class App:
         m = PATTERNS["channel"].match(raw)
         if m:
             self.current_channel = int(m.group(1))
-            # reset last-dark holders when channel changes
             return
 
         # TEMP (on)
@@ -574,8 +743,6 @@ class App:
                     if state == "dark":
                         self._a1_dark[self.current_channel] = val
                 return
-
-        # Other lines we ignore for template CSV (ΔV, gain, i2c, warnings) but keep in console
 
     # ---- Utils ----
     @staticmethod
