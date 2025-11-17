@@ -1,388 +1,268 @@
-%% mc_gelphantom_dual_088_hiResGPU_1hr_v53.m
-% Dual-wavelength (1450 & 1650 nm) Monte Carlo LUT for gel phantom (f_H2O ≈ 0.88).
-% - GPU auto (PCT+CUDA) with CPU fallback
-% - Prints progress (point/seed/percent) and wavelength tag
-% - Saves CSV + PNG + FIG per wavelength in a timestamped output folder
-% - Runtime tuned ~1 hour total on RTX 4070 SUPER (≈30 min per wavelength)
+function GelPhantom_1450_1650
+%% GelPhantom_1450_1650
+% Monte Carlo simulation of your gel phantom for:
+%   - λ = 1450 nm: LED + PD ~1 mm above the gel (1 mm air layer)
+%   - λ = 1650 nm: LED flush with the gel (no explicit air layer)
+%
+% For each wavelength, we compute:
+%   - R_3mm = P_PD / P_incident at SDS = 3 mm
+%   - R_7mm = P_PD / P_incident at SDS = 7 mm
+%   - R_far / R_close ratio
 
-clear; clc;
+    clc;
+    MCmatlab.closeMCmatlabFigures();
 
-%% ---------------- RUNTIME TARGET ----------------
-target_total_minutes = 60;   % aim ~1 hour total (both wavelengths together)
+    %% ===== Common geometry sizes =====
+    nx = 101;      % x bins
+    ny = 101;      % y bins
+    nz = 150;      % z bins
 
-% Tuned for ~30 min per lambda on 4070 SUPER:
-sim_minutes_per_run  = 0.50;  % minutes per seed per μs' value
-seeds_per_pt         = 3;     % seeds per μs' value (averaged)
-coarse_pts           = 12;    % coarse μs' points per λ
-refine_pts           = 8;     % refine μs' points per λ (around max slope)
-use_refine           = true;
-refine_span          = 0.20;  % +/-20% band around slope-peak μs'
+    Lx = 5.0;      % [cm] x size  (phantom ~5 cm)
+    Ly = 7.0;      % [cm] y size  (phantom ~7 cm)
+    Lz = 3.0;      % [cm] z size  (phantom ~3 cm thick)
 
-% Quick sanity check of plan (approx):
-% per_lambda_runs = (coarse_pts + refine_pts) * seeds_per_pt
-% per_lambda_time ≈ per_lambda_runs * sim_minutes_per_run
-% total_time ≈ 2 * per_lambda_time
+    %% ===== 1450 nm model: source + PD 1 mm above gel =====
+    model1450 = MCmatlab.model;
 
-%% ---------------- GEOMETRY & DETECTORS ----------------
-% Big box + fine grid (accuracy-first), still reasonable memory
-Lx = 2.8; Ly = 2.8; Lz = 3.2;   % [cm]
-nx = 181; ny = 181; nz = 220;   % voxel grid
-zSurface = 0.01;                % air (1) over gel (2)
+    % Geometry
+    model1450.G.nx = nx;
+    model1450.G.ny = ny;
+    model1450.G.nz = nz;
+    model1450.G.Lx = Lx;
+    model1450.G.Ly = Ly;
+    model1450.G.Lz = Lz;
 
-% Detectors (top boundary, centered at x=±SDS, y=0)
-SDS_close_cm = 0.30;    % 3 mm
-SDS_far_cm   = 0.70;    % 7 mm
-det_radius_cm        = 0.10;    % balance sensitivity vs SNR
-surface_shell_thick  = 0.05;    % integrate 3D fluence within this top shell
+    % Air layer (0–0.10 cm) + gel below that
+    model1450.G.geomFunc            = @geometryDefinition_1450;
+    model1450.G.mediaPropertiesFunc = @mediaPropertiesFunc_1450;
 
-% MC controls
-useAllCPUs   = true;
-matchedRI    = false;
+    % Quick geometry plot (optional)
+    model1450 = plot(model1450,'G');
+    title('Geometry @ 1450 nm (air + gel)');
 
-%% ---------------- OUTPUT FOLDER ----------------
-outdir = fullfile(pwd, ['MC_LUT_', datestr(now,'yyyymmdd_HHMMSS')]);
-if ~exist(outdir,'dir'), mkdir(outdir); end
-fprintf('Output folder: %s\n', outdir);
+    % MC settings
+    model1450.MC.simulationTimeRequested = 1.0;   % [min]
+    model1450.MC.matchedInterfaces       = true;  % all n = 1
+    model1450.MC.boundaryType            = 1;     % all faces escaping
+    model1450.MC.wavelength              = 1450;  % [nm]
 
-%% ---------------- GPU AUTO-SELECT ----------------
-[useGPU, gpuName] = pickGPU();
-if useGPU
-    fprintf('GPU enabled: %s\n', gpuName);
-else
-    fprintf('GPU not available → using CPU (Parallel Computing Toolbox required for GPU).\n');
-end
+    % Light source: rectangular LED-like emitter
+    model1450 = configureLightSource(model1450);
 
-%% ---------------- CONSTANTS ----------------
-% Composition (80% water, 10% gelatin, 10% IL20); effective water column ~0.88
-f_water   = 0.80;  f_gelatin = 0.10;  f_IL20 = 0.10;
-f_H2O_eff = 0.88;
+    % Light collector: PD ~1 mm above gel
+    model1450 = configureLightCollector(model1450);
 
-% Optical model (van Staveren-like IL μs', simple gelatin μs'; Hale–Querry water μa)
-A_IL = 239.6; b_IL = 1.155; lambda0_nm = 500;
-musp_gelatin_500 = 5; beta_gel = 1.5;
-g_aniso = 0.90; n_gel = 1.33; n_air = 1.00;
+    % Run for SDS = 3 mm and 7 mm
+    SDS_list_cm = [0.3, 0.7];          % [cm] 3 mm and 7 mm
+    R1450       = zeros(size(SDS_list_cm));
 
-% Two wavelengths, in this order
-lambda_list = [1450, 1650];
+    fprintf('\n=== Wavelength = 1450 nm (LED + PD ~1 mm above gel) ===\n');
+    for k = 1:numel(SDS_list_cm)
+        SDS = SDS_list_cm(k);
 
-%% --------------- MAIN: LOOP OVER WAVELENGTHS ---------------
-for LAMBDA = lambda_list
+        % Set PD x-position (SDS along +x from source at x=0)
+        model1450.MC.lightCollector.x = SDS;
 
-    % --- wavelength-specific optical properties
-    musp_IL20      = A_IL * (LAMBDA/lambda0_nm)^(-b_IL); % 20% stock
-    musp_IL_for_10 = musp_IL20 * (f_IL20/0.20);          % 10% of stock
-    musp_gel       = musp_gelatin_500 * (LAMBDA/500)^(-beta_gel) * f_gelatin;
+        % Run MC
+        model1450 = runMonteCarlo(model1450);
 
-    mua_water = mua_water_HaleQuerry(LAMBDA);
-    mua_gel   = 0.05;
-    mua_IL    = 0.01;
-    mua_mix   = f_H2O_eff*mua_water + f_gelatin*mua_gel + f_IL20*mua_IL;
+        % Store normalized collected power
+        R1450(k) = model1450.MC.lightCollector.image;
 
-    fprintf('\n============================================================\n');
-    fprintf('λ = %d nm | μa_mix = %.3f cm^-1, μs''_IL(10%%) = %.2f, μs''_gel = %.2f\n', ...
-        LAMBDA, mua_mix, musp_IL_for_10, musp_gel);
-    fprintf('============================================================\n');
-
-    % --- μs' TOTAL sweep (absolute totals) around a center estimate
-    musp_center_est = musp_IL_for_10 + musp_gel;    % typical total μs'
-    musp_min = max(5, 0.25*musp_center_est);
-    musp_max = max(musp_center_est*2.25, 80);
-    musp_total_coarse = linspace(musp_min, musp_max, coarse_pts);
-
-    % --- globals for media/geometry callbacks
-    clear global MC_GEL_OPTS;
-    global MC_GEL_OPTS;
-    MC_GEL_OPTS = struct( ...
-        'zSurface', zSurface, ...
-        'matchedRI', matchedRI, ...
-        'g_gel', g_aniso, ...
-        'n_gel', n_gel, ...
-        'n_air', n_air, ...
-        'mua_gel', mua_mix );
-
-    rng('shuffle','twister');
-
-    % --- COARSE SWEEP
-    [musp_c, Rc_c, Rf_c] = run_sweep(musp_total_coarse, ...
-        Lx,Ly,Lz,nx,ny,nz, SDS_close_cm,SDS_far_cm, det_radius_cm,surface_shell_thick, ...
-        useAllCPUs,matchedRI,sim_minutes_per_run,seeds_per_pt,LAMBDA,g_aniso,useGPU, ...
-        sprintf('Coarse λ=%d', LAMBDA));
-
-    ratio_c = Rf_c ./ Rc_c;
-
-    if use_refine
-        % pick refine band where slope magnitude is largest
-        gC = gradient(ratio_c) ./ max(1e-12, gradient(musp_c));
-        [~,idx] = max(abs(gC));
-        center  = musp_c(idx);
-        lo = max(5, center*(1 - refine_span));
-        hi = center*(1 + refine_span);
-        musp_total_fine = linspace(lo, hi, refine_pts);
-
-        [musp_f, Rc_f, Rf_f] = run_sweep(musp_total_fine, ...
-            Lx,Ly,Lz,nx,ny,nz, SDS_close_cm,SDS_far_cm, det_radius_cm,surface_shell_thick, ...
-            useAllCPUs,matchedRI,sim_minutes_per_run,seeds_per_pt,LAMBDA,g_aniso,useGPU, ...
-            sprintf('Refine λ=%d', LAMBDA));
-
-        musp_total_vec = [musp_c; musp_f];
-        R_close = [Rc_c; Rc_f];
-        R_far   = [Rf_c; Rf_f];
-    else
-        musp_total_vec = musp_c;
-        R_close = Rc_c; R_far = Rf_c;
+        fprintf('SDS = %.1f mm: collected_norm = %.3e W/W_incident\n', ...
+                SDS*10, R1450(k));
     end
 
-    % --- sort and build LUT
-    [musp_total_vec, order] = sort(musp_total_vec);
-    R_close = R_close(order); R_far = R_far(order);
-    ratio   = R_far ./ R_close;
+    % Optional: MC plot for last 1450 run
+    model1450 = plot(model1450,'MC');
 
-    T = table(musp_total_vec(:), R_close(:), R_far(:), ratio(:), ...
-        'VariableNames', {'mu_s_prime_total_cm1','R_close','R_far','R_far_over_R_close'});
+    %% ===== 1650 nm model: source flush with gel (no air layer) =====
+    model1650 = MCmatlab.model;
 
-    % --- save CSV
-    csvname = fullfile(outdir, sprintf('mc_lut_%dnm_fH2O088_HIRES_GPU_v53.csv', LAMBDA));
-    writetable(T, csvname);
-    fprintf('Saved LUT -> %s\n', csvname);
+    % Geometry
+    model1650.G.nx = nx;
+    model1650.G.ny = ny;
+    model1650.G.nz = nz;
+    model1650.G.Lx = Lx;
+    model1650.G.Ly = Ly;
+    model1650.G.Lz = Lz;
 
-    % --- plot & save
-    f = figure('Color','w'); plot(musp_total_vec, ratio, 'o-','LineWidth',1.6); grid on;
-    xlabel('\mu_s''_{total} [cm^{-1}]'); ylabel('R_{far} / R_{close}');
-    title(sprintf('LUT (λ=%d nm, f_{H2O}=0.88), %d pts (seeds=%d, t=%.2f min/run)', ...
-          LAMBDA, numel(musp_total_vec), seeds_per_pt, sim_minutes_per_run));
-    pngname = fullfile(outdir, sprintf('mc_lut_plot_%dnm_v53.png', LAMBDA));
-    figname = fullfile(outdir, sprintf('mc_lut_plot_%dnm_v53.fig', LAMBDA));
-    saveas(f, pngname); saveas(f, figname); close(f);
-    fprintf('Saved plots -> %s , %s\n', pngname, figname);
+    % Gel extends all the way to the top (z = 0) → source flush with gel
+    model1650.G.geomFunc            = @geometryDefinition_1650;
+    model1650.G.mediaPropertiesFunc = @mediaPropertiesFunc_1650;
 
-    % --- brief preview
-    disp('----- LUT preview -----'); disp(T(1:min(12,height(T)),:));
-end
+    % Quick geometry plot (optional)
+    model1650 = plot(model1650,'G');
+    title('Geometry @ 1650 nm (gel to top)');
 
-fprintf('\nAll done. Files saved in: %s\n', outdir);
+    % MC settings
+    model1650.MC.simulationTimeRequested = 1.0;   % [min]
+    model1650.MC.matchedInterfaces       = true;
+    model1650.MC.boundaryType            = 1;
+    model1650.MC.wavelength              = 1650;  % [nm]
 
-%% ================= Helper Functions =================
-function mua = mua_water_HaleQuerry(lambda_nm)
-  % Hale & Querry μa of pure water [cm^-1] (sparse nodes + pchip)
-  data_nm = [400 500 600 700 800 900 1000 1100 1200 1300 1400 1450 1500 1550 1600 1650 1700 1800 1900 2000];
-  data_cm1= [0.00012 0.00022 0.00040 0.00090 0.0020 0.0040 0.010 0.020 0.040 0.20 2.0 25.0 14.0 8.0 6.0 5.0 4.0 15.0 90.0 120.0];
-  mua = interp1(data_nm, data_cm1, lambda_nm, 'pchip', 'extrap');
-end
+    % Light source: same LED-like emitter configuration,
+    % but now it is effectively at the gel surface.
+    model1650 = configureLightSource(model1650);
 
-function mediaProperties = mediaPropertiesFunc_gel(~)
-  % Global media function for 2-layer air/gel model
-  global MC_GEL_OPTS;
-  mediaProperties = MCmatlab.mediumProperties;
-  % Air
-  j=1; mediaProperties(j).name='air';
-  mediaProperties(j).mua = 1e-8; mediaProperties(j).mus = 1e-8;
-  mediaProperties(j).g   = 1.0;  mediaProperties(j).n   = MC_GEL_OPTS.n_air;
-  % Gel (mixture)
-  j=2; mediaProperties(j).name='gel';
-  mediaProperties(j).mua = MC_GEL_OPTS.mua_gel;
-  mediaProperties(j).mus = MC_GEL_OPTS.mus_gel;
-  mediaProperties(j).g   = MC_GEL_OPTS.g_gel;
-  mediaProperties(j).n   = MC_GEL_OPTS.matchedRI * MC_GEL_OPTS.n_air + ...
-                           (~MC_GEL_OPTS.matchedRI) * MC_GEL_OPTS.n_gel;
-end
+    % Light collector: keep just above top surface (now gel surface)
+    model1650 = configureLightCollector(model1650);
 
-function M = geometry_air_over_gel(X,~,Z,~)
-  % media index: 1 = air, 2 = gel
-  global MC_GEL_OPTS;
-  M = ones(size(X));
-  M(Z > MC_GEL_OPTS.zSurface) = 2;
-end
+    % Run for SDS = 3 mm and 7 mm
+    R1650 = zeros(size(SDS_list_cm));
 
-function [NI2D, x, y] = grab_top_boundary_from_fig(Lx, Ly)
-  % Extract top-boundary irradiance image from newest MC figure (fallback).
-  NI2D = []; x = []; y = [];
-  figs = flip(findobj('Type','figure'));
-  for f = 1:numel(figs)
-      imgs = findobj(figs(f), 'Type', 'image');
-      for i = 1:numel(imgs)
-          I = imgs(i);
-          C = get(I, 'CData');
-          if ~isnumeric(C) || ndims(C)~=2 || any(size(C)<[16 16]), continue; end
-          if isempty(NI2D) || numel(C) > numel(NI2D)
-              NI2D = C;
-              if isprop(I,'XData') && isprop(I,'YData')
-                  xd = get(I,'XData'); yd = get(I,'YData');
-                  if numel(xd)==2, x = linspace(xd(1), xd(2), size(C,1)); end
-                  if numel(yd)==2, y = linspace(yd(1), yd(2), size(C,2)); end
-              end
-          end
-      end
-      if ~isempty(NI2D), break; end
-  end
-  if ~isempty(NI2D)
-      if isempty(x), x = linspace(-Lx/2, Lx/2, size(NI2D,1)); end
-      if isempty(y), y = linspace(-Ly/2, Ly/2, size(NI2D,2)); end
-  end
-end
+    fprintf('\n=== Wavelength = 1650 nm (LED flush with gel) ===\n');
+    for k = 1:numel(SDS_list_cm)
+        SDS = SDS_list_cm(k);
 
-function [bestArr, bestPath] = find_largest_numeric_array(S, ndimsWanted)
-  % Recursively scan struct/cell for largest numeric array of ndimsWanted.
-  bestArr = []; bestPath = '';
-  visited = containers.Map('KeyType','char','ValueType','logical');
-  [bestArr, bestPath] = scan_node(S, 'model', ndimsWanted, bestArr, bestPath, visited);
+        % Set PD x-position
+        model1650.MC.lightCollector.x = SDS;
 
-  function [currBest, currPath] = scan_node(node, path, ndWanted, currBest, currPath, visited)
-    key = sprintf('%s|%s', path, class(node));
-    if isKey(visited, key), return; end
-    visited(key) = true;
+        % Run MC
+        model1650 = runMonteCarlo(model1650);
 
-    if isnumeric(node) && ndims(node)==ndWanted && all(size(node)>1)
-        if isempty(currBest) || numel(node) > numel(currBest)
-            currBest = node; currPath = path;
-        end
-        return;
-    elseif isstruct(node)
-        f = fieldnames(node);
-        for i=1:numel(node)
-            for j=1:numel(f)
-                sub = node(i).(f{j});
-                [currBest, currPath] = scan_node(sub, sprintf('%s.%s(%d)', path, f{j}, i), ndWanted, currBest, currPath, visited);
-            end
-        end
-    elseif iscell(node)
-        for i=1:numel(node)
-            [currBest, currPath] = scan_node(node{i}, sprintf('%s{%d}', path, i), ndWanted, currBest, currPath, visited);
-        end
-    end
-  end
-end
+        % Store normalized collected power
+        R1650(k) = model1650.MC.lightCollector.image;
 
-function [useGPU, gpuName] = pickGPU()
-  % Return true and name if we can use CUDA; false otherwise.
-  useGPU = false; gpuName = '';
-  hasPCT = license('test','Distrib_Computing_Toolbox');
-  if ~hasPCT, return; end
-  if ~exist('gpuDeviceCount','file'), return; end
-  try
-      n = gpuDeviceCount;
-      if n > 0
-          g = gpuDevice(1);   % 1-based in MATLAB
-          gpuName = g.Name;
-          useGPU = true;
-      end
-  catch
-      useGPU = false;
-  end
-end
-
-function [musp_vec, Rclose, Rfar] = run_sweep(musp_total_vec, ...
-    Lx,Ly,Lz,nx,ny,nz, SDS_close_cm,SDS_far_cm, det_radius_cm,surface_shell_thick, ...
-    useAllCPUs,matchedRI,sim_minutes,seeds_per_pt,lambda_nm,g_aniso,useGPU, passName)
-
-    K  = numel(musp_total_vec);
-    TT = K * seeds_per_pt;
-    Rclose = zeros(K,1); Rfar = zeros(K,1);
-
-    counter = 0;
-    for k = 1:K
-        musp_total = musp_total_vec(k);
-        mus_total  = musp_total / (1 - g_aniso);
-
-        close_accum = 0; far_accum = 0;
-
-        for rep = 1:seeds_per_pt
-            counter = counter + 1;
-            pct = 100*counter/TT;
-            fprintf('(pt %2d/%2d, seed %d/%d) %6.2f%% [%s]  λ=%d nm, μs''_total=%6.2f cm^-1 ...\n', ...
-                k, K, rep, seeds_per_pt, pct, passName, lambda_nm, musp_total);
-
-            % ---------- Build model ----------
-            model = MCmatlab.model;
-            model.G.nx = nx; model.G.ny = ny; model.G.nz = nz;
-            model.G.Lx = Lx; model.G.Ly = Ly; model.G.Lz = Lz;
-            model.G.mediaPropertiesFunc = @mediaPropertiesFunc_gel;
-            model.G.geomFunc            = @geometry_air_over_gel;
-
-            model.MC.useAllCPUs              = useAllCPUs;
-            model.MC.simulationTimeRequested = sim_minutes;
-            model.MC.matchedInterfaces       = matchedRI;
-            model.MC.boundaryType            = 2;
-            model.MC.wavelength              = lambda_nm;
-
-            % Prefer numeric data (reduce need for plotting fallbacks)
-            if isprop(model.MC,'saveVolumeData'),   model.MC.saveVolumeData = true;   end
-            if isprop(model.MC,'saveBoundaryData'), model.MC.saveBoundaryData = true; end
-
-            % GPU toggle
-            if isprop(model.MC,'useGPU'),      model.MC.useGPU = useGPU; end
-            if isprop(model.MC,'GPUdevice'),   model.MC.GPUdevice = 0;   end  % first GPU
-
-            % Version-safe seeding
-            seed = randi(2^31-1);
-            if isprop(model.MC,'randomSeed'), model.MC.randomSeed = seed; else, rng(seed,'twister'); end
-
-            % LED-like source
-            model.MC.lightSource.sourceType = 5;
-            model.MC.lightSource.xFocus = 0; model.MC.lightSource.yFocus = 0; model.MC.lightSource.zFocus = 0;
-            model.MC.lightSource.focalPlaneIntensityDistribution.XDistr = 0;
-            model.MC.lightSource.focalPlaneIntensityDistribution.XWidth = 0.03;
-            model.MC.lightSource.focalPlaneIntensityDistribution.YDistr = 0;
-            model.MC.lightSource.focalPlaneIntensityDistribution.YWidth = 0.02;
-            model.MC.lightSource.angularIntensityDistribution.XDistr = 2;
-            model.MC.lightSource.angularIntensityDistribution.YDistr = 2;
-
-            % Pass μs to media function
-            global MC_GEL_OPTS; MC_GEL_OPTS.mus_gel = mus_total;
-
-            % ---------- Run MC ----------
-            model = runMonteCarlo(model);
-
-            % ---------- Prefer numeric 3-D ----------
-            [FR3, ~] = find_largest_numeric_array(model, 3);
-
-            if ~isempty(FR3)
-                [sx, sy, sz] = size(FR3);
-                x = linspace(-Lx/2, Lx/2, sx);
-                y = linspace(-Ly/2, Ly/2, sy);
-                z = linspace(0,     Lz,    sz);
-                [XX,YY,ZZ] = ndgrid(x,y,z);
-
-                top_mask      = (ZZ <= surface_shell_thick);
-                detmask_close = ((XX - SDS_close_cm).^2 + YY.^2) <= det_radius_cm^2;
-                detmask_far   = ((XX - SDS_far_cm ).^2 + YY.^2) <= det_radius_cm^2;
-
-                roi_close = top_mask & detmask_close;
-                roi_far   = top_mask & detmask_far;
-
-                dx = x(2)-x(1); dy = y(2)-y(1); dz = z(2)-z(1);
-                voxvol = dx*dy*dz;
-
-                close_accum = close_accum + sum(FR3(roi_close), 'all') * voxvol;
-                far_accum   = far_accum   + sum(FR3(roi_far),   'all') * voxvol;
-
-            else
-                % ---------- Fallback: use top boundary image from figure ----------
-                model = plot(model,'MC');
-                [NI2D, x2d, y2d] = grab_top_boundary_from_fig(Lx, Ly);
-                if isempty(NI2D)
-                    [NI2D, ~] = find_largest_numeric_array(model, 2);
-                    if isempty(NI2D), error('Could not obtain MC numeric arrays nor figure image.'); end
-                    [sx, sy] = size(NI2D);
-                    x2d = linspace(-Lx/2, Lx/2, sx);
-                    y2d = linspace(-Ly/2, Ly/2, sy);
-                end
-
-                [XX2,YY2] = ndgrid(x2d, y2d);
-                detmask_close = ((XX2 - SDS_close_cm).^2 + YY2.^2) <= det_radius_cm^2;
-                detmask_far   = ((XX2 - SDS_far_cm ).^2 + YY2.^2) <= det_radius_cm^2;
-
-                dx = x2d(2)-x2d(1); dy = y2d(2)-y2d(1); pixA = dx*dy;
-                close_accum = close_accum + sum(NI2D(detmask_close), 'all') * pixA;
-                far_accum   = far_accum   + sum(NI2D(detmask_far),   'all') * pixA;
-            end
-        end
-
-        Rclose(k) = close_accum / seeds_per_pt;
-        Rfar(k)   = far_accum   / seeds_per_pt;
-
-        fprintf('... R_close = %.3e, R_far = %.3e, ratio = %.4f\n', ...
-            Rclose(k), Rfar(k), Rfar(k)/Rclose(k));
+        fprintf('SDS = %.1f mm: collected_norm = %.3e W/W_incident\n', ...
+                SDS*10, R1650(k));
     end
 
-    musp_vec = musp_total_vec(:);
+    % Optional: MC plot for last 1650 run
+    model1650 = plot(model1650,'MC');
+
+    %% ===== Summary =====
+    fprintf('\n===== Summary (P_{PD} / P_{incident}) =====\n');
+    fprintf('λ = 1450 nm:  R_3mm = %.3e,  R_7mm = %.3e,  R_far/R_close = %.3f\n', ...
+        R1450(1), R1450(2), R1450(2)/R1450(1));
+    fprintf('λ = 1650 nm:  R_3mm = %.3e,  R_7mm = %.3e,  R_far/R_close = %.3f\n', ...
+        R1650(1), R1650(2), R1650(2)/R1650(1));
+end
+
+
+%% ===== Helper: configure LED-like light source =====
+function model = configureLightSource(model)
+    % Rectangular LED-like emitter with Lambertian angular distribution.
+
+    model.MC.lightSource.sourceType = 5;     % X/Y factorizable rectangular
+
+    % Beam axis at (0,0), pointing along +z into the phantom
+    model.MC.lightSource.xFocus = 0;
+    model.MC.lightSource.yFocus = 0;
+    model.MC.lightSource.zFocus = model.G.Lz/2;  % arbitrary focus depth
+    model.MC.lightSource.theta  = 0;
+    model.MC.lightSource.phi    = 0;
+
+    % Focal-plane intensity distribution (FPID):
+    % uniform 0.3 mm × 0.3 mm emitting area
+    emitX = 0.03;   % [cm]
+    emitY = 0.03;   % [cm]
+    model.MC.lightSource.focalPlaneIntensityDistribution.XDistr = 1;  % top-hat
+    model.MC.lightSource.focalPlaneIntensityDistribution.YDistr = 1;
+    model.MC.lightSource.focalPlaneIntensityDistribution.XWidth = emitX;
+    model.MC.lightSource.focalPlaneIntensityDistribution.YWidth = emitY;
+
+    % Angular intensity distribution (AID): Lambertian (cosine) in X and Y
+    model.MC.lightSource.angularIntensityDistribution.XDistr = 2;  % cosine
+    model.MC.lightSource.angularIntensityDistribution.YDistr = 2;
+end
+
+
+%% ===== Helper: configure light collector (PD) =====
+function model = configureLightCollector(model)
+    % Configures a 110 µm PD centered at (x,0) on top, with z just above surface.
+    % x (SDS) is set separately before each run.
+
+    model.MC.useLightCollector   = true;
+    model.MC.lightCollector.f    = Inf;        % PD / fiber tip mode
+    model.MC.lightCollector.y    = 0.0;        % [cm]
+
+    % PD just above the top surface z=0
+    % For 1450 nm: top is air, gel starts at z=0.10 → PD ~1 mm above gel.
+    % For 1650 nm: top is gel → PD effectively just above gel surface.
+    model.MC.lightCollector.z    = -1e-4;      % [cm] just above z=0
+
+    model.MC.lightCollector.diam = 0.05;      % [cm] 110 µm -> 0.011
+    model.MC.lightCollector.theta = 0;         % facing into +z
+    model.MC.lightCollector.phi   = 0;
+    model.MC.lightCollector.NA    = 1.0;
+    model.MC.lightCollector.res   = 1;         % single-pixel collector
+end
+
+
+%% ===== Geometry: 1450 nm (air + gel) =====
+function M = geometryDefinition_1450(X,Y,Z,parameters)
+    % 0 <= z <= 0.10 cm → medium 1 (air)
+    % z > 0.10 cm      → medium 2 (gel phantom)
+    zSurface = 0.10;         % [cm] 1 mm air layer
+    M = ones(size(X));       % start as air (1)
+    M(Z > zSurface) = 2;     % below zSurface → gel (2)
+end
+
+
+%% ===== Geometry: 1650 nm (gel to top) =====
+function M = geometryDefinition_1650(X,Y,Z,parameters)
+    % No explicit air layer: gel occupies almost entire cuboid.
+    % For all z > 0, set medium = gel.
+    M = ones(size(X));       % start as "air"
+    M(Z > 0) = 2;            % everything inside cuboid → gel (2)
+end
+
+
+%% ===== Media properties: 1450 nm =====
+function mediaProperties = mediaPropertiesFunc_1450(parameters)
+    % Optical properties at 1450 nm
+    % Medium 1: air (μa ≈ μs ≈ 0)
+    % Medium 2: 80% water, 10% gelatin, 10% IL phantom
+
+    mediaProperties = MCmatlab.mediumProperties;
+
+    % Air
+    j = 1;
+    mediaProperties(j).name = 'air';
+    mediaProperties(j).mua  = 1e-8;  % [cm^-1]
+    mediaProperties(j).mus  = 1e-8;  % [cm^-1]
+    mediaProperties(j).g    = 1;
+
+    % Gel phantom @ 1450 nm
+    j = 2;
+    g_gel   = 0.9;
+    mu_sp   = 15.7;      % [cm^-1] reduced scattering μs'
+    mu_s    = mu_sp / (1 - g_gel);
+    mua_mix = 22.9;      % [cm^-1] absorption μa
+
+    mediaProperties(j).name = 'gel phantom @1450nm';
+    mediaProperties(j).mua  = mua_mix;
+    mediaProperties(j).mus  = mu_s;
+    mediaProperties(j).g    = g_gel;
+end
+
+
+%% ===== Media properties: 1650 nm =====
+function mediaProperties = mediaPropertiesFunc_1650(parameters)
+    % Optical properties at 1650 nm
+    % Medium 1: air (outside cuboid)
+    % Medium 2: gel phantom with lower μa
+
+    mediaProperties = MCmatlab.mediumProperties;
+
+    % "Air" (unused inside cuboid since geometry puts gel everywhere z>0,
+    % but kept for consistency)
+    j = 1;
+    mediaProperties(j).name = 'air';
+    mediaProperties(j).mua  = 1e-8;
+    mediaProperties(j).mus  = 1e-8;
+    mediaProperties(j).g    = 1;
+
+    % Gel phantom @ 1650 nm
+    j = 2;
+    g_gel   = 0.9;
+    mu_sp   = 13.0;     % [cm^-1] reduced scattering μs' (example)
+    mu_s    = mu_sp / (1 - g_gel);
+    mua_mix = 3.8;      % [cm^-1] lower absorption at 1650 nm
+
+    mediaProperties(j).name = 'gel phantom @1650nm';
+    mediaProperties(j).mua  = mua_mix;
+    mediaProperties(j).mus  = mu_s;
+    mediaProperties(j).g    = g_gel;
 end
