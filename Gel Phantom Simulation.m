@@ -1,16 +1,30 @@
-function GelPhantom_1450_1650
+function LUT = GelPhantom_1450_1650
 %% GelPhantom_1450_1650
-% Monte Carlo simulation of your gel phantom for:
+% Monte Carlo simulation of your gel phantom sweeping μs' values.
+%
+% For each μs' in mu_sp_list, it computes:
 %   - λ = 1450 nm: LED + PD ~1 mm above the gel (1 mm air layer)
 %   - λ = 1650 nm: LED flush with the gel (no explicit air layer)
-%
-% For each wavelength, we compute:
+% and measures:
 %   - R_3mm = P_PD / P_incident at SDS = 3 mm
 %   - R_7mm = P_PD / P_incident at SDS = 7 mm
-%   - R_far / R_close ratio
+%   - R_far/R_close at each wavelength
+%
+% Output:
+%   LUT is an N×3 matrix:
+%       [ μs' , (R_far/R_close)_1450 , (R_far/R_close)_1650 ]
 
     clc;
     MCmatlab.closeMCmatlabFigures();
+
+    %% ===== User-tunable μs' sweep =====
+    % Reduced scattering coefficients μs′ [cm^-1] to sweep over
+    mu_sp_list = [5 10 15 20 25];   % EDIT this list as you like
+
+    nMu = numel(mu_sp_list);
+
+    % Lookup table: [mu_sp , Rratio1450 , Rratio1650]
+    LUT = zeros(nMu, 3);
 
     %% ===== Common geometry sizes =====
     nx = 101;      % x bins
@@ -21,122 +35,155 @@ function GelPhantom_1450_1650
     Ly = 7.0;      % [cm] y size  (phantom ~7 cm)
     Lz = 3.0;      % [cm] z size  (phantom ~3 cm thick)
 
-    %% ===== 1450 nm model: source + PD 1 mm above gel =====
-    model1450 = MCmatlab.model;
+    % Source–detector separations (cm)
+    SDS_list_cm = [0.3, 0.7];      % 3 mm and 7 mm
 
-    % Geometry
-    model1450.G.nx = nx;
-    model1450.G.ny = ny;
-    model1450.G.nz = nz;
-    model1450.G.Lx = Lx;
-    model1450.G.Ly = Ly;
-    model1450.G.Lz = Lz;
+    % Monte Carlo settings (same for all runs)
+    simTime_min = 1.0;             % [min] MC simulation time
 
-    % Air layer (0–0.10 cm) + gel below that
-    model1450.G.geomFunc            = @geometryDefinition_1450;
-    model1450.G.mediaPropertiesFunc = @mediaPropertiesFunc_1450;
+    % For debugging you can turn plots on/off
+    doPlotGeom = false;
+    doPlotMC   = false;
 
-    % Quick geometry plot (optional)
-    model1450 = plot(model1450,'G');
-    title('Geometry @ 1450 nm (air + gel)');
+    %% ===== Main μs' sweep loop =====
+    for iMu = 1:nMu
+        mu_sp = mu_sp_list(iMu);        % current μs' [cm^-1]
 
-    % MC settings
-    model1450.MC.simulationTimeRequested = 1.0;   % [min]
-    model1450.MC.matchedInterfaces       = true;  % all n = 1
-    model1450.MC.boundaryType            = 1;     % all faces escaping
-    model1450.MC.wavelength              = 1450;  % [nm]
+        fprintf('\n==============================\n');
+        fprintf(' Sweeping μs'' = %.2f cm^-1\n', mu_sp);
+        fprintf('==============================\n');
 
-    % Light source: rectangular LED-like emitter
-    model1450 = configureLightSource(model1450);
+        %% ----- 1450 nm model: LED + PD ~1 mm above gel -----
+        model1450 = MCmatlab.model;
 
-    % Light collector: PD ~1 mm above gel
-    model1450 = configureLightCollector(model1450);
+        % Geometry
+        model1450.G.nx = nx;
+        model1450.G.ny = ny;
+        model1450.G.nz = nz;
+        model1450.G.Lx = Lx;
+        model1450.G.Ly = Ly;
+        model1450.G.Lz = Lz;
 
-    % Run for SDS = 3 mm and 7 mm
-    SDS_list_cm = [0.3, 0.7];          % [cm] 3 mm and 7 mm
-    R1450       = zeros(size(SDS_list_cm));
+        % Air layer (0–0.10 cm) + gel below that
+        model1450.G.geomFunc            = @geometryDefinition_1450;
+        model1450.G.mediaPropertiesFunc = @mediaPropertiesFunc_1450;
+        % Pass μs' into the media properties function via mediaPropParams
+        model1450.G.mediaPropParams     = {mu_sp};
 
-    fprintf('\n=== Wavelength = 1450 nm (LED + PD ~1 mm above gel) ===\n');
-    for k = 1:numel(SDS_list_cm)
-        SDS = SDS_list_cm(k);
+        if doPlotGeom
+            model1450 = plot(model1450,'G');
+            title(sprintf('Geometry @ 1450 nm, μs'' = %.2f', mu_sp));
+        end
 
-        % Set PD x-position (SDS along +x from source at x=0)
-        model1450.MC.lightCollector.x = SDS;
+        % MC settings
+        model1450.MC.simulationTimeRequested = simTime_min;
+        model1450.MC.matchedInterfaces       = true;  % all n = 1
+        model1450.MC.boundaryType            = 1;     % all faces escaping
+        model1450.MC.wavelength              = 1450;  % [nm]
 
-        % Run MC
-        model1450 = runMonteCarlo(model1450);
+        % Light source & collector
+        model1450 = configureLightSource(model1450);
+        model1450 = configureLightCollector(model1450);
 
-        % Store normalized collected power
-        R1450(k) = model1450.MC.lightCollector.image;
+        % Run for SDS = 3 mm and 7 mm
+        R1450 = zeros(size(SDS_list_cm));
 
-        fprintf('SDS = %.1f mm: collected_norm = %.3e W/W_incident\n', ...
-                SDS*10, R1450(k));
+        fprintf('--- λ = 1450 nm ---\n');
+        for k = 1:numel(SDS_list_cm)
+            SDS = SDS_list_cm(k);
+
+            % Set PD x-position (SDS along +x from source at x=0)
+            model1450.MC.lightCollector.x = SDS;
+
+            % Run MC
+            model1450 = runMonteCarlo(model1450);
+
+            % Store normalized collected power
+            R1450(k) = model1450.MC.lightCollector.image;
+
+            fprintf('  SDS = %.1f mm: R = %.3e W/W_incident\n', ...
+                    SDS*10, R1450(k));
+        end
+
+        if doPlotMC
+            model1450 = plot(model1450,'MC');
+        end
+
+        Rratio1450 = R1450(2) / R1450(1);   % R_far/R_close
+
+        %% ----- 1650 nm model: LED flush with gel -----
+        model1650 = MCmatlab.model;
+
+        % Geometry
+        model1650.G.nx = nx;
+        model1650.G.ny = ny;
+        model1650.G.nz = nz;
+        model1650.G.Lx = Lx;
+        model1650.G.Ly = Ly;
+        model1650.G.Lz = Lz;
+
+        % Gel extends all the way to the top (z = 0) → source flush with gel
+        model1650.G.geomFunc            = @geometryDefinition_1650;
+        model1650.G.mediaPropertiesFunc = @mediaPropertiesFunc_1650;
+        % Same μs' sweep used at 1650 nm
+        model1650.G.mediaPropParams     = {mu_sp};
+
+        if doPlotGeom
+            model1650 = plot(model1650,'G');
+            title(sprintf('Geometry @ 1650 nm, μs'' = %.2f', mu_sp));
+        end
+
+        % MC settings
+        model1650.MC.simulationTimeRequested = simTime_min;
+        model1650.MC.matchedInterfaces       = true;
+        model1650.MC.boundaryType            = 1;
+        model1650.MC.wavelength              = 1650;  % [nm]
+
+        % Light source & collector
+        model1650 = configureLightSource(model1650);
+        model1650 = configureLightCollector(model1650);
+
+        % Run for SDS = 3 mm and 7 mm
+        R1650 = zeros(size(SDS_list_cm));
+
+        fprintf('--- λ = 1650 nm ---\n');
+        for k = 1:numel(SDS_list_cm)
+            SDS = SDS_list_cm(k);
+
+            % Set PD x-position
+            model1650.MC.lightCollector.x = SDS;
+
+            % Run MC
+            model1650 = runMonteCarlo(model1650);
+
+            % Store normalized collected power
+            R1650(k) = model1650.MC.lightCollector.image;
+
+            fprintf('  SDS = %.1f mm: R = %.3e W/W_incident\n', ...
+                    SDS*10, R1650(k));
+        end
+
+        if doPlotMC
+            model1650 = plot(model1650,'MC');
+        end
+
+        Rratio1650 = R1650(2) / R1650(1);   % R_far/R_close
+
+        %% ----- Store in LUT -----
+        LUT(iMu, :) = [mu_sp, Rratio1450, Rratio1650];
+
+        fprintf('=> μs'' = %.2f:  R1450_far/close = %.3f,  R1650_far/close = %.3f\n', ...
+                mu_sp, Rratio1450, Rratio1650);
     end
 
-    % Optional: MC plot for last 1450 run
-    model1450 = plot(model1450,'MC');
-
-    %% ===== 1650 nm model: source flush with gel (no air layer) =====
-    model1650 = MCmatlab.model;
-
-    % Geometry
-    model1650.G.nx = nx;
-    model1650.G.ny = ny;
-    model1650.G.nz = nz;
-    model1650.G.Lx = Lx;
-    model1650.G.Ly = Ly;
-    model1650.G.Lz = Lz;
-
-    % Gel extends all the way to the top (z = 0) → source flush with gel
-    model1650.G.geomFunc            = @geometryDefinition_1650;
-    model1650.G.mediaPropertiesFunc = @mediaPropertiesFunc_1650;
-
-    % Quick geometry plot (optional)
-    model1650 = plot(model1650,'G');
-    title('Geometry @ 1650 nm (gel to top)');
-
-    % MC settings
-    model1650.MC.simulationTimeRequested = 1.0;   % [min]
-    model1650.MC.matchedInterfaces       = true;
-    model1650.MC.boundaryType            = 1;
-    model1650.MC.wavelength              = 1650;  % [nm]
-
-    % Light source: same LED-like emitter configuration,
-    % but now it is effectively at the gel surface.
-    model1650 = configureLightSource(model1650);
-
-    % Light collector: keep just above top surface (now gel surface)
-    model1650 = configureLightCollector(model1650);
-
-    % Run for SDS = 3 mm and 7 mm
-    R1650 = zeros(size(SDS_list_cm));
-
-    fprintf('\n=== Wavelength = 1650 nm (LED flush with gel) ===\n');
-    for k = 1:numel(SDS_list_cm)
-        SDS = SDS_list_cm(k);
-
-        % Set PD x-position
-        model1650.MC.lightCollector.x = SDS;
-
-        % Run MC
-        model1650 = runMonteCarlo(model1650);
-
-        % Store normalized collected power
-        R1650(k) = model1650.MC.lightCollector.image;
-
-        fprintf('SDS = %.1f mm: collected_norm = %.3e W/W_incident\n', ...
-                SDS*10, R1650(k));
+    %% ===== Print final LUT nicely =====
+    fprintf('\n=========== Lookup Table (μs'' sweep) ===========\n');
+    fprintf('   μs'' [cm^-1]   (R_far/R_close)_1450   (R_far/R_close)_1650\n');
+    for iMu = 1:nMu
+        fprintf('   %8.3f         %8.3f              %8.3f\n', ...
+            LUT(iMu,1), LUT(iMu,2), LUT(iMu,3));
     end
-
-    % Optional: MC plot for last 1650 run
-    model1650 = plot(model1650,'MC');
-
-    %% ===== Summary =====
-    fprintf('\n===== Summary (P_{PD} / P_{incident}) =====\n');
-    fprintf('λ = 1450 nm:  R_3mm = %.3e,  R_7mm = %.3e,  R_far/R_close = %.3f\n', ...
-        R1450(1), R1450(2), R1450(2)/R1450(1));
-    fprintf('λ = 1650 nm:  R_3mm = %.3e,  R_7mm = %.3e,  R_far/R_close = %.3f\n', ...
-        R1650(1), R1650(2), R1650(2)/R1650(1));
+    fprintf('=================================================\n');
 end
 
 
@@ -170,7 +217,7 @@ end
 
 %% ===== Helper: configure light collector (PD) =====
 function model = configureLightCollector(model)
-    % Configures a 110 µm PD centered at (x,0) on top, with z just above surface.
+    % Configures a PD centered at (x,0) on top, with z just above surface.
     % x (SDS) is set separately before each run.
 
     model.MC.useLightCollector   = true;
@@ -178,11 +225,12 @@ function model = configureLightCollector(model)
     model.MC.lightCollector.y    = 0.0;        % [cm]
 
     % PD just above the top surface z=0
-    % For 1450 nm: top is air, gel starts at z=0.10 → PD ~1 mm above gel.
-    % For 1650 nm: top is gel → PD effectively just above gel surface.
     model.MC.lightCollector.z    = -1e-4;      % [cm] just above z=0
 
-    model.MC.lightCollector.diam = 0.05;      % [cm] 110 µm -> 0.011
+    % NOTE: Using a larger PD (0.05 cm = 0.5 mm) for better MC statistics.
+    % You can change this back to 0.011 cm for the real 110 μm PD.
+    model.MC.lightCollector.diam = 0.05;       % [cm]
+
     model.MC.lightCollector.theta = 0;         % facing into +z
     model.MC.lightCollector.phi   = 0;
     model.MC.lightCollector.NA    = 1.0;
@@ -209,11 +257,10 @@ function M = geometryDefinition_1650(X,Y,Z,parameters)
 end
 
 
-%% ===== Media properties: 1450 nm =====
+%% ===== Media properties: 1450 nm (μs' passed via parameters) =====
 function mediaProperties = mediaPropertiesFunc_1450(parameters)
     % Optical properties at 1450 nm
-    % Medium 1: air (μa ≈ μs ≈ 0)
-    % Medium 2: 80% water, 10% gelatin, 10% IL phantom
+    % parameters{1} = μs' [cm^-1] for the gel phantom.
 
     mediaProperties = MCmatlab.mediumProperties;
 
@@ -226,10 +273,15 @@ function mediaProperties = mediaPropertiesFunc_1450(parameters)
 
     % Gel phantom @ 1450 nm
     j = 2;
-    g_gel   = 0.9;
-    mu_sp   = 15.7;      % [cm^-1] reduced scattering μs'
-    mu_s    = mu_sp / (1 - g_gel);
-    mua_mix = 22.9;      % [cm^-1] absorption μa
+    g_gel = 0.9;
+
+    if ~isempty(parameters)
+        mu_sp = parameters{1};      % reduced scattering μs' [cm^-1]
+    else
+        mu_sp = 15.7;               % default value
+    end
+    mu_s    = mu_sp / (1 - g_gel);  % convert μs' -> μs
+    mua_mix = 22.9;                 % [cm^-1] absorption μa
 
     mediaProperties(j).name = 'gel phantom @1450nm';
     mediaProperties(j).mua  = mua_mix;
@@ -238,16 +290,14 @@ function mediaProperties = mediaPropertiesFunc_1450(parameters)
 end
 
 
-%% ===== Media properties: 1650 nm =====
+%% ===== Media properties: 1650 nm (μs' passed via parameters) =====
 function mediaProperties = mediaPropertiesFunc_1650(parameters)
     % Optical properties at 1650 nm
-    % Medium 1: air (outside cuboid)
-    % Medium 2: gel phantom with lower μa
+    % parameters{1} = μs' [cm^-1] for the gel phantom.
 
     mediaProperties = MCmatlab.mediumProperties;
 
-    % "Air" (unused inside cuboid since geometry puts gel everywhere z>0,
-    % but kept for consistency)
+    % "Air" (index 1) kept for consistency
     j = 1;
     mediaProperties(j).name = 'air';
     mediaProperties(j).mua  = 1e-8;
@@ -256,10 +306,16 @@ function mediaProperties = mediaPropertiesFunc_1650(parameters)
 
     % Gel phantom @ 1650 nm
     j = 2;
-    g_gel   = 0.9;
-    mu_sp   = 13.0;     % [cm^-1] reduced scattering μs' (example)
-    mu_s    = mu_sp / (1 - g_gel);
-    mua_mix = 3.8;      % [cm^-1] lower absorption at 1650 nm
+    g_gel = 0.9;
+
+    if ~isempty(parameters)
+        mu_sp = parameters{1};      % reduced scattering μs' [cm^-1]
+    else
+        mu_sp = 13.0;               % default value
+    end
+    mu_s    = mu_sp / (1 - g_gel);  % convert μs' -> μs
+
+    mua_mix = 3.8;                  % [cm^-1] lower absorption at 1650 nm
 
     mediaProperties(j).name = 'gel phantom @1650nm';
     mediaProperties(j).mua  = mua_mix;
