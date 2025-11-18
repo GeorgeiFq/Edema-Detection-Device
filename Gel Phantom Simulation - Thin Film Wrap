@@ -315,7 +315,7 @@ function mediaProperties = mediaPropertiesFunc_1650(parameters)
     mediaProperties(j).mua  = mua_mix_1650;
     mediaProperties(j).mus  = mu_s_1650;
     mediaProperties(j).g    = g_gel;
-    mediaProperties(j).n    = 1.33;
+    mediaProperties(j).n    = 1.4;
 end
 
 
