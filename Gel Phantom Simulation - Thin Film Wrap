@@ -9,7 +9,7 @@ function LUT = GelPhantom_1450_1650
 %   - z > 0.02 cm       : GEL phantom
 %
 % Phantom:
-%   - 80% water, 10% gelatin, 10% Intralipid (approx.)
+%   - 80% water, 10% gelatin, 10% Intralipid (approx.).
 %   - μa(λ) from Hale–Querry water absorption, scaled by 0.8 for water fraction.
 %
 % Wavelength-dependent scattering:
@@ -42,7 +42,8 @@ function LUT = GelPhantom_1450_1650
     SDS_list_cm = [0.3, 0.7];   % 3 mm & 7 mm
     simTime_min = 1.0;
 
-    doPlotGeom = false;
+    doPlotGeom = false;   % geometry plot toggle
+    doPlotMC   = true;    % <<< MC absorbed/fluence figures toggle
 
     %% ===== One-time setup summary print =====
     printSimulationSetup(mu_sp_list(1), mua1450_scale_list(1), SDS_list_cm, Lx, Ly, Lz);
@@ -108,6 +109,11 @@ function LUT = GelPhantom_1450_1650
                 R1450(k) = model1450.MC.lightCollector.image;
 
                 fprintf('  SDS = %.1f mm: R = %.3e\n', SDS*10, R1450(k));
+
+                % Show absorbed / NFR / boundary plots for the first SDS only
+                if doPlotMC && k == 1
+                    model1450 = plot(model1450,'MC');
+                end
             end
 
             Rratio1450 = R1450(2) / R1450(1);
@@ -147,6 +153,11 @@ function LUT = GelPhantom_1450_1650
                 R1650(k) = model1650.MC.lightCollector.image;
 
                 fprintf('  SDS = %.1f mm: R = %.3e\n', SDS*10, R1650(k));
+
+                % Show absorbed / NFR / boundary plots for first SDS only
+                if doPlotMC && k == 1
+                    model1650 = plot(model1650,'MC');
+                end
             end
 
             if R1650(1) > 0
@@ -227,7 +238,7 @@ function printSimulationSetup(mu_sp_1450, muaScale1450, SDS_list_cm, Lx, Ly, Lz)
     fprintf('\nLED / source model (both λ):\n');
     fprintf('  Source type        = 5 (rectangular surface source)\n');
     fprintf('  Emission area      = %.3f cm × %.3f cm (%.1f µm × %.1f µm)\n', ...
-        emitX, emitY, emitX*1e4, emitY*1e4);
+        emitX, emitX, emitX*1e4, emitY*1e4);
     fprintf('  Half-angle (1450)  = 60 deg\n');
     fprintf('  Half-angle (1650)  = 40 deg\n');
 
