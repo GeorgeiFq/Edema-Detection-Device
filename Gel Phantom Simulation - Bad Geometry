@@ -55,8 +55,8 @@ function LUT = GelPhantom_1450_1650
 
     simTime_min = 1.0;             % MC sim time [min]
 
-    doPlotGeom = false;
-    doPlotMC   = false;
+    doPlotGeom = true;
+    doPlotMC   = true;
 
     %% ===== One-time simulation description =====
     printSimulationDescription(mu_sp_list(1), mua1450_scale_list(1), SDS_list_cm, Lx, Ly, Lz);
@@ -311,14 +311,30 @@ function model = configureLightCollector(model)
     model.MC.lightCollector.f    = Inf;
     model.MC.lightCollector.y    = 0.0;
 
-    model.MC.lightCollector.z    = -1e-4;
-    model.MC.lightCollector.diam = 0.011;
+    % Wavelength-dependent PD height
+    lambda = model.MC.wavelength;
 
+    if lambda <= 1500
+        % 1450 nm case:
+        % gel surface at z = 0.10 cm, PD/LED plane at z ≈ 0
+        % → ~1 mm above gel
+        model.MC.lightCollector.z = -1e-4;    % ~0 cm
+    else
+        % 1650 nm case:
+        % gel surface at z = 0.02 cm (0.2 mm below PCB plane)
+        % want PD 1.0 mm above gel → 0.02 - 0.10 = -0.08 cm
+        zSurface1650 = 0.02;   % [cm]
+        gap_cm       = 0.10;   % 1 mm
+        model.MC.lightCollector.z = zSurface1650 - gap_cm;  % = -0.08 cm
+    end
+
+    model.MC.lightCollector.diam = 0.011;   % 110 µm
     model.MC.lightCollector.theta = 0;
     model.MC.lightCollector.phi   = 0;
     model.MC.lightCollector.NA    = 0.91;
     model.MC.lightCollector.res   = 1;
 end
+
 
 
 %% ===== Geometry: 1450 nm (1 mm air gap) =====
