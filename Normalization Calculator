@@ -1,0 +1,38 @@
+PTFE_Active_1450C = 3.200003333
+PTFE_Active_1450F = 0.9796333333
+PTFE_Active_1650C = 2.224123333
+PTFE_Active_1650F = 0.65005
+
+PTFE_Dark_1450C = 0.4737033333
+PTFE_Dark_1450F = 0.4737033333
+PTFE_Dark_1650C = 0.4737033333
+PTFE_Dark_1650F = 0.4737033333
+
+Gel_Active_1450C = 0.8625516667
+Gel_Active_1450F = 0.487405
+Gel_Active_1650C = 0.4698266667
+Gel_Active_1650F = 0.4698033333
+
+Gel_Dark_1450C = 0.470415
+Gel_Dark_1450F = 0.4701016667
+Gel_Dark_1650C = 0.4702583333
+Gel_Dark_1650F = 0.4701566667
+
+PTFE_Subtracted_1450C = PTFE_Active_1450C - PTFE_Dark_1450C
+PTFE_Subtracted_1450F = PTFE_Active_1450F - PTFE_Dark_1450F
+PTFE_Subtracted_1650C = PTFE_Active_1650C - PTFE_Dark_1650C
+PTFE_Subtracted_1650F = PTFE_Active_1650F - PTFE_Dark_1650F
+
+Gel_Subtracted_1450C = Gel_Active_1450C - Gel_Dark_1450C
+Gel_Subtracted_1450F = Gel_Active_1450F - Gel_Dark_1450F
+Gel_Subtracted_1650C = Gel_Active_1650C - Gel_Dark_1650C
+Gel_Subtracted_1650F = Gel_Active_1650F - Gel_Dark_1650F
+
+Normalized_1450_Close = Gel_Subtracted_1450C / PTFE_Subtracted_1450C
+Normalized_1450_Far = Gel_Subtracted_1450F / PTFE_Subtracted_1450F
+Normalized_1650_Close = Gel_Subtracted_1650C / PTFE_Subtracted_1650C
+Normalized_1650_Far = Gel_Subtracted_1650F / PTFE_Subtracted_1650F
+
+print("Normalized 1450 Close: ", Normalized_1450_Close)
+print("Normalized 1450 Far: ", Normalized_1450_Far)
+print("Far Over Close Ratio 1450: ", Normalized_1450_Far / Normalized_1450_Close)
