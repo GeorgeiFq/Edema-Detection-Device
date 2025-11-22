@@ -1,6 +1,5 @@
-%% Standard tissue example with μs' sweep, 3mm & 7mm SDS
-
-clc;
+%% Standard1450 – LED flush, PD 0.1 mm above, μs' sweep, 3mm & 7mm SDS
+clc; clear;
 
 %% ---------------- OPTICAL PROPERTIES --------------------
 
@@ -13,7 +12,7 @@ f_lipid = 0.02;
 mu_a_water_1450 = 28.8;
 
 % Mix absorption (gel & lipid contributions ~0 at 1450)
-mu_a_mix = f_water * mu_a_water_1450 + f_gel * 0 + f_lipid * 0;  % ≈ 25.3 cm^-1
+mu_a_mix = f_water * mu_a_water_1450;   % ≈ 25.3 cm^-1
 assignin('base','mu_a_mix',mu_a_mix);
 
 % Reduced scattering guesses μs' (cm^-1)
@@ -25,7 +24,15 @@ fprintf("μa_mix = %.3f cm^-1\n", mu_a_mix);
 fprintf("Sweeping μs' values: "); disp(mu_sp_list);
 fprintf("========================================\n");
 
+% Define default mu_s_user so mediaPropertiesFunc works before loop
+mu_sp_init = mu_sp_list(1);
+mu_s_init  = mu_sp_init / (1 - g);
+assignin('base','mu_s_user',mu_s_init);
+
 %% ---------------- GEOMETRY SETUP ----------------------
+
+% Put gel surface at z = 0.0 (top interface)
+zSurface_cm = 0.00;     % gel starts at z > 0
 
 MCmatlab.closeMCmatlabFigures();
 baseModel = MCmatlab.model;
@@ -41,9 +48,7 @@ baseModel.G.Lz = 1.5;   % [cm]
 baseModel.G.mediaPropertiesFunc = @mediaPropertiesFunc;
 baseModel.G.geomFunc            = @geometryDefinition;
 
-% Plot geometry once (like the original example)
-geoModel = baseModel;
-geoModel = plot(geoModel,'G');
+% No geometry plotting to avoid version issues
 
 %% SDS list for detectors (cm): 3 mm & 7 mm
 SDS_list = [0.3, 0.7];   % [cm]
@@ -74,19 +79,19 @@ for k = 1:length(mu_sp_list)
         model = baseModel;
 
         % Monte Carlo settings
-        model.MC.simulationTimeRequested = 1.5;   % longer run time = more photons
-        model.MC.matchedInterfaces       = false; % USE real n (air vs gel)
+        model.MC.simulationTimeRequested = 0.5;   % [min] as you set
+        model.MC.matchedInterfaces       = true;  % allow photons to escape & be collected
         model.MC.boundaryType            = 1;
         model.MC.wavelength              = 1450;
 
-        % LED model (rectangular Lambertian source)
+        % LED model (rectangular Lambertian source), flush with gel surface
         emitX_cm = 0.05;
         emitY_cm = 0.05;
 
         model.MC.lightSource.sourceType = 5;
         model.MC.lightSource.xFocus = 0;
         model.MC.lightSource.yFocus = 0;
-        model.MC.lightSource.zFocus = 0.03;
+        model.MC.lightSource.zFocus = zSurface_cm;    % LED at gel interface (z = 0)
 
         model.MC.lightSource.focalPlaneIntensityDistribution.XDistr = 0;
         model.MC.lightSource.focalPlaneIntensityDistribution.YDistr = 0;
@@ -99,17 +104,18 @@ for k = 1:length(mu_sp_list)
         model.MC.lightSource.theta = 0;
         model.MC.lightSource.phi   = 0;
 
-        % ---- Single PD collector at this SDS ----
-        pd_diam_cm = 0.05;   % enlarged PD (e.g. 0.5 mm) for better statistics
+        % ---- PD collector at this SDS ----
+        % PD 0.1 mm above gel surface: z = -0.01 cm (outside [0, Lz] domain)
+        pd_diam_cm = 0.05;   % ~0.5 mm diameter
 
         model.MC.useLightCollector  = true;
         model.MC.lightCollector.f   = Inf;
         model.MC.lightCollector.res = 1;
         model.MC.lightCollector.x   = sds_cm;   % SDS in x
         model.MC.lightCollector.y   = 0.0;
-        model.MC.lightCollector.z   = -0.001;   % just above surface
+        model.MC.lightCollector.z   = -0.01;    % 0.1 mm above gel surface
 
-        model.MC.lightCollector.theta = 0;      % facing +z (down into tissue)
+        model.MC.lightCollector.theta = 0;
         model.MC.lightCollector.phi   = 0;
 
         model.MC.lightCollector.diam  = pd_diam_cm;
@@ -120,10 +126,8 @@ for k = 1:length(mu_sp_list)
         % Run the simulation
         model = runMonteCarlo(model);
 
-        % *** MCmatlab visualization plots (like before) ***
-        % This opens the MC plot GUI for each run.
-        % Comment this out if it produces too many windows.
-        model = plot(model,'MC');
+        % (Optional) MC plots – comment in if you want
+        % model = plot(model,'MC');
 
         % Fraction of launched photons reaching this PD
         R_PD = model.MC.nPhotonsCollected / model.MC.nPhotons;
@@ -151,40 +155,12 @@ fprintf("\n=========== SUMMARY (1450 nm) ===========\n");
 disp(array2table(results, ...
     'VariableNames',{'mu_s_prime','R_close_3mm','R_far_7mm','FarCloseRatio'}));
 
-%% ---------------- SUMMARY PLOTS -------------------------
-
-mu_s_prime = results(:,1);
-R_close_3mm = results(:,2);
-R_far_7mm   = results(:,3);
-ratio_FR    = results(:,4);
-
-figure;
-subplot(3,1,1);
-plot(mu_s_prime, R_close_3mm, '-o');
-xlabel('\mu_s'' [cm^{-1}]');
-ylabel('R_{close} (3 mm)');
-title('Close detector reflectance vs \mu_s'' (1450 nm)');
-grid on;
-
-subplot(3,1,2);
-plot(mu_s_prime, R_far_7mm, '-o');
-xlabel('\mu_s'' [cm^{-1}]');
-ylabel('R_{far} (7 mm)');
-title('Far detector reflectance vs \mu_s'' (1450 nm)');
-grid on;
-
-subplot(3,1,3);
-plot(mu_s_prime, ratio_FR, '-o');
-xlabel('\mu_s'' [cm^{-1}]');
-ylabel('R_{far} / R_{close}');
-title('Far/Close ratio vs \mu_s'' (1450 nm)');
-grid on;
-
 %% ================= GEOMETRY FUNCTION ===========================
 function M = geometryDefinition(X,Y,Z,parameters)
-    zSurface = 0.03;
-    M = ones(size(X));
-    M(Z > zSurface) = 2;
+    % z = 0 is top; air above, gel below
+    zSurface = 0.00;
+    M = ones(size(X));             % 1 = air
+    M(Z > zSurface) = 2;           % 2 = phantom
 end
 
 %% ================= MEDIA PROPERTIES ============================
