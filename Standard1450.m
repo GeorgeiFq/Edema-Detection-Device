@@ -1,375 +1,161 @@
-function model = runMonteCarlo(model,varargin)
-  %   Requires
-  %       MCmatlab.mex (architecture specific)
-  %
-  %   See also plot, runMonteCarloFluorescence, simulateHeatDistribution
+%% Final Dual-Wavelength Simulation (Presentation Ready)
+% Description:
+% Runs sequential simulations for 1450nm (The Wall) and 1650nm (The Window).
+% - Uses FLUSH geometry (Source/Detector at Z=0).
+% - Calculates signals at 3mm and 7mm.
+% - Forces Log10 visualization for valid 3D comparison.
 
-  %%%%%
-  %   Copyright 2017, 2018 by Dominik Marti and Anders K. Hansen
-  %
-  %   This file is part of MCmatlab.
-  %
-  %   MCmatlab is free software: you can redistribute it and/or modify
-  %   it under the terms of the GNU General Public License as published by
-  %   the Free Software Foundation, either version 3 of the License, or
-  %   (at your option) any later version.
-  %
-  %   MCmatlab is distributed in the hope that it will be useful,
-  %   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  %   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  %   GNU General Public License for more details.
-  %
-  %   You should have received a copy of the GNU General Public License
-  %   along with MCmatlab.  If not, see <https://www.gnu.org/licenses/>.
-  %%%%%
+clear; clc;
+MCmatlab.closeMCmatlabFigures();
 
-  % checking on macOS whether the mex-file is quarantined and clearing it
-  if ismac
-    [~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/MCmatlab.mexmaci64');
-    if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/MCmatlab.mexmaci64'); end
-    [~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/getDownsampledParamVals.mexmaci64');
-    if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/getDownsampledParamVals.mexmaci64'); end
-    [~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/finiteElementHeatPropagator.mexmaci64');
-    if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/finiteElementHeatPropagator.mexmaci64'); end
-    if strcmp(mexext,'mexmaca64')
-      error('MCmatlab isn''t supported on native Apple silicon MATLAB (only R2023b and newer) at the moment. Please use the intel-version of MATLAB instead.')
-      %[~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/MCmatlab.mexmaca64');
-      %if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/MCmatlab.mexmaca64'); end
-      %[~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/getDownsampledParamVals.mexmaca64');
-      %if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/getDownsampledParamVals.mexmaca64'); end
-      %[~,cmdout] = system('xattr -l ./+MCmatlab/@model/private/finiteElementHeatPropagator.mexmaca64');
-      %if contains(cmdout,'com.apple.quarantine'); system('xattr -d com.apple.quarantine ./+MCmatlab/@model/private/finiteElementHeatPropagator.mexmaca64'); end
-    end
-  end
-
-  forceSingleThreaded = isunix && ~ismac && isMATLABReleaseOlderThan('R2020b');
-  if forceSingleThreaded % Multithreading doesn't work properly on Linux older than R2020b for some reason
-    warning('Linux MCmatlab multithreading is disabled on MATLAB versions older than R2020b. Update your MATLAB to utilize multithreading.');
-  end
-
-  model.G = model.G.updateGeometry;
-  G = model.G;
-
-  if any(strcmp(varargin,'fluorescence'))
-    simType = 2;
-    useGPU = model.FMC.useGPU;
-  else
-    simType = 1;
-    useGPU = model.MC.useGPU;
-    % Calculate spectrum from the spectrum function handle:
-    for iWavelength = numel(model.MC.wavelength):-1:1
-      model.MC.spectrum(iWavelength) = model.MC.spectrumFunc(model.MC.wavelength(iWavelength));
-    end
-    model.MC.spectrum = model.MC.spectrum/sum(model.MC.spectrum); % Normalize
-    model.MC.sourceDistribution = model.MC.sourceDistribution/(model.G.dx*model.G.dy*model.G.dz*sum(model.MC.sourceDistribution(:))); % Normalize
-  end
-
-  checkMCinputFields(model,simType);
-
-  %% Get initial temperature, fractional damage and fluence rate
-  T = NaN([G.nx G.ny G.nz],'single');
-  T(:) = model.HS.T; % model.HS.T may be scalar or 3D
-
-  FD = NaN([G.nx G.ny G.nz],'single');
-  FD(:) = 1 - exp(-model.HS.Omega); % Fractional damage of molecules/cells. model.HS.Omega may be scalar 0 or 3D
-
-  FR = NaN([G.nx G.ny G.nz],'single');
-  FR(:) = model.MC.P*sum(model.MC.NFR,4); % All excitation wavelengths are summed to get the total fluence rate. model.MC.NFR may be scalar 0 or 3D or 4D
-
-  %% Call Monte Carlo C code (MEX file) to get fluence rate distribution, possibly inside an iterative loop in the case of fluence rate dependent excitation light
-  iterate = simType == 1 && model.MC.FRdepIterations > 0;
-
-  if iterate
-    nIterations = model.MC.FRdepIterations;
-    if isnan(model.MC.nPhotonsRequested)
-      t = model.MC.simulationTimeRequested;
-      t_array = t*(1/2).^(nIterations-1:-1:0);
-    else
-      nPhotons = model.MC.nPhotonsRequested;
-      nPhotons_array = nPhotons*(1/2).^(nIterations-1:-1:0);
-    end
-    for i=1:nIterations
-      if isnan(model.MC.nPhotonsRequested)
-        model.MC.simulationTimeRequested = t_array(i);
-      else
-        model.MC.nPhotonsRequested = nPhotons_array(i);
-      end
-      model = getOpticalMediaProperties(model,simType); % Also performs splitting of mediaProperties and M_raw, if necessary
-      if useGPU
-        model = MCmatlab_CUDA(model,simType);
-      else
-        if forceSingleThreaded % Multithreading doesn't work properly on Linux older than R2020b for some reason
-          model = MCmatlab_singlethreaded(model,simType);
-        else
-          model = MCmatlab(model,simType);
-        end
-      end
-      if i<nIterations; model.MC.FR = model.MC.P*model.MC.NFR; end
-    end
-    if isnan(model.MC.nPhotonsRequested)
-      model.MC.simulationTimeRequested = t;
-    else
-      model.MC.nPhotonsRequested = nPhotons;
-    end
-  else
-    model = getOpticalMediaProperties(model,simType); % Also performs splitting of mediaProperties and M_raw, if necessary
-    if simType == 2 % Since we're not iterating, we might be simulating fluorescence
-      %% Calculate 3D fluorescence source distribution
-      Ls_E = model.MC.wavelength; % Excitation wavelengths
-      nL_E = numel(Ls_E); % Number of excitation wavelengths
-      Ls_F = model.FMC.wavelength; % Fluorescence wavelengths
-      nL_F = numel(Ls_F); % Number of fluorescence wavelengths
-      mP_fH = G.mediaPropertiesFunc(G.mediaPropParams);
-      nM = numel(mP_fH);
-      Fphotons = zeros(size(G.M_raw)); % Proportional to how many fluorescence photons are emitted, as function of xyz, summed over all wavelengths
-      emSp = NaN([size(G.M_raw),nL_F]); % The emission spectra as function of wavelength. These start out non-normalized but will be normalized later. Because each emission spectrum may depend on FR, T and FD, each voxel may have its own emission spectrum
-      NA = model.MC.NA;
-      for iM = 1:nM
-        idxs = find(G.M_raw == iM);
-        FRs = FR(idxs);
-        Ts = T(idxs);
-        FDs = FD(idxs);
-        Fphotons_thisMedium = zeros(size(idxs));
-        for iL_E = 1:nL_E % Loop over excitation wavelengths
-          try
-            if G.FRdependent(iM,4) || G.optTdependent(iM,4) || G.optFDdependent(iM,4)
-              QYs = mP_fH(iM).QY(Ls_E(iL_E),FRs,Ts,FDs);
-            else
-              QYs = mP_fH(iM).QY(Ls_E(iL_E),0,0,0);
-            end
-          catch; error('Error: The QY function of medium %s is throwing an error. If you have specified the function with four input arguments, it must be able to accept the first (wavelength in nm) as a scalar and the next three (fluence rate FR, temperature T and fractional damage FD) as 3D arrays. Therefore, remember to use element-wise arithmetic operators (.* instead of *, ./ instead of / etc.)',mP_fH(iM).name);
-          end
-          Fphotons_thisMedium = Fphotons_thisMedium + NA(idxs + (iL_E-1)*G.nx*G.ny*G.nz).*QYs.*Ls_E(iL_E);
-        end
-        Fphotons(idxs) = Fphotons_thisMedium;
-        for iL_F = 1:nL_F % Loop over fluorescence wavelengths
-          try 
-            if G.FRdependent(iM,5) || G.optTdependent(iM,5) || G.optFDdependent(iM,5)
-              emSp(idxs + (iL_F-1)*G.nx*G.ny*G.nz) = mP_fH(iM).ES(Ls_F(iL_F),FRs,Ts,FDs);
-            else
-              emSp(idxs + (iL_F-1)*G.nx*G.ny*G.nz) = mP_fH(iM).ES(Ls_F(iL_F),0,0,0);
-            end
-          catch; error('Error: The ES function of medium %s is throwing an error. If you have specified the function with four input arguments, it must be able to accept the first (wavelength in nm) as a scalar and the next three (fluence rate FR, temperature T and fractional damage FD) as 3D arrays. Therefore, remember to use element-wise arithmetic operators (.* instead of *, ./ instead of / etc.)',mP_fH(iM).name);
-          end
-        end
-      end
-      if any(~isfinite(Fphotons(:))) || ~isreal(Fphotons) || any(Fphotons(:) < 0)
-        error('Error: A quantum yield function is returning values that are not finite, real and non-negative.');
-      end
-      if any(~isfinite(emSp(:))) || ~isreal(emSp) || any(emSp(:) < 0)
-        error('Error: An emission spectrum function is returning values that are not finite, real and non-negative.');
-      end
-      
-      emSp = emSp./repmat(sum(emSp,4),1,1,1,nL_F); % Normalization
-      model.FMC.sourceDistribution = repmat(Fphotons,1,1,1,nL_F).*emSp./repmat(permute(Ls_F(:),[2 3 4 1]),G.nx,G.ny,G.nz,1); % The fluorescence source distribution is each voxel's emission spectrum normalized to a sum equal to the corresponding value in Fsources3D
-
-      if max(model.FMC.sourceDistribution(:)) == 0; error('Error: No fluorescence emitters'); end
-    end
-    if useGPU
-      model = MCmatlab_CUDA(model,simType);
-    else
-      if forceSingleThreaded % Multithreading doesn't work properly on Linux older than R2020b for some reason
-        model = MCmatlab_singlethreaded(model,simType);
-      else
-        model = MCmatlab(model,simType);
-      end
-    end
-  end
-
-  if simType == 2
-    % Add positions of the centers of the pixels in the light collector
-    % image and the time array
-    if model.FMC.useLightCollector && model.FMC.LC.res > 1
-      model.FMC.LC.X = linspace(model.FMC.LC.fieldSize*(1/model.FMC.LC.res-1),model.FMC.LC.fieldSize*(1-1/model.FMC.LC.res),model.FMC.LC.res)/2;
-      model.FMC.LC.Y = model.FMC.LC.X;
-    end
-    if model.FMC.useLightCollector && model.FMC.LC.nTimeBins > 0
-      if model.FMC.matchedInterfaces
-        warning('Time tagging is on, but matchedInterfaces is true, which sets all refractive indices to 1.');
-      end
-      model.FMC.LC.t = (-1/2:(model.FMC.LC.nTimeBins+1/2))*(model.FMC.LC.tEnd-model.FMC.LC.tStart)/model.FMC.LC.nTimeBins + model.FMC.LC.tStart;
-    end
-
-    % Add angles of the centers of the far field pixels
-    if model.FMC.farFieldRes
-      model.FMC.farFieldTheta = linspace(pi/model.FMC.farFieldRes/2,pi-pi/model.FMC.farFieldRes/2,model.FMC.farFieldRes);
-      model.FMC.farFieldPhi   = linspace(-pi+(2*pi)/model.FMC.farFieldRes/2,pi-(2*pi)/model.FMC.farFieldRes/2,model.FMC.farFieldRes);
-    end
-  else
-    % Add positions of the centers of the pixels in the light collector
-    % image and the time array
-    if model.MC.useLightCollector && model.MC.LC.res > 1
-      model.MC.LC.X = linspace(model.MC.LC.fieldSize*(1/model.MC.LC.res-1),model.MC.LC.fieldSize*(1-1/model.MC.LC.res),model.MC.LC.res)/2;
-      model.MC.LC.Y = model.MC.LC.X;
-    end
-    if model.MC.useLightCollector && model.MC.LC.nTimeBins > 0
-      if model.MC.matchedInterfaces
-        warning('Time tagging is on, but matchedInterfaces is true, which sets all refractive indices to 1.');
-      end
-      model.MC.LC.t = (-1/2:(model.MC.LC.nTimeBins+1/2))*(model.MC.LC.tEnd-model.MC.LC.tStart)/model.MC.LC.nTimeBins + model.MC.LC.tStart;
-    end
-
-    % Add angles of the centers of the far field pixels
-    if model.MC.farFieldRes
-      model.MC.farFieldTheta = linspace(pi/model.MC.farFieldRes/2,pi-pi/model.MC.farFieldRes/2,model.MC.farFieldRes);
-      model.MC.farFieldPhi   = linspace(-pi+(2*pi)/model.MC.farFieldRes/2,pi-(2*pi)/model.MC.farFieldRes/2,model.MC.farFieldRes);
-    end
-  end
+% Create Results Folder
+folderName = 'Simulation_Results';
+if ~exist(folderName, 'dir')
+    mkdir(folderName);
 end
 
-function checkMCinputFields(model,simType)
-  G = model.G;
+%% Simulation Settings
+wavelengths = [1450, 1650];
+mua_values  = [23.0, 6.0];  % 23 for 1450nm (Water Peak), 6 for 1650nm (Valley)
+titles      = {'1450 nm (The Wall)', '1650 nm (The Window)'};
 
-  if simType == 2
-    MCorFMC = model.FMC;
-  else
-    MCorFMC = model.MC;
-  end
+fprintf('Starting Batch Simulation...\n');
 
-  %% Check for GPU compatibility if needed
-  if (simType == 1 && model.MC.useGPU) || (simType == 2 && model.FMC.useGPU)
-    if ~ispc
-      error('GPU computing is only supported on Windows');
-    end
-    v = ver;
-    if ~any(strcmp({v.Name},'Parallel Computing Toolbox'))
-      error('You must have the Parallel Computing Toolbox installed to use GPU acceleration');
-    end
-    try
-      GPUDev = gpuDevice;
-      if(str2double(GPUDev.ComputeCapability) < 3)
-        error('Your GPU is too old (CUDA compute capability < 3.0)')
-      end
-    catch
-      error('No supported NVIDIA GPU found, or its driver is too old');
-    end
-  end
+%% Loop Through Wavelengths
+for i = 1:length(wavelengths)
+    wl = wavelengths(i);
+    mua = mua_values(i);
+    simTitle = titles{i};
+    
+    fprintf('\n--- Running %s ---\n', simTitle);
+    
+    % Initialize Model
+    model = MCmatlab.model;
+    
+    % 1. Geometry (Flush Contact at Z=0)
+    model.G.nx = 101; model.G.ny = 101; model.G.nz = 100;
+    model.G.Lx = 2.0; model.G.Ly = 2.0; model.G.Lz = 1.0;
+    
+    % Pass the specific mu_a for this run into the parameter cell array
+    model.G.mediaPropParams = {mua}; 
+    model.G.mediaPropertiesFunc = @mediaPropertiesFunc; 
+    model.G.geomFunc = @geometryDefinition;
+    
+    % 2. Monte Carlo Setup
+    model.MC.simulationTimeRequested = 30.0; % [min]
+    model.MC.matchedInterfaces = false;
+    model.MC.boundaryType = 1;
+    model.MC.wavelength = wl;
+    
+    % Source: Pencil Beam at Z=0 (Flush)
+    model.MC.lightSource.sourceType = 0; 
+    model.MC.lightSource.zFocus = 0.001; % Just inside tissue (10 microns deep)
+    
+    % Run MC
+    model = runMonteCarlo(model);
+    
+    % 3. Extract Results
+    % Get surface fluence (1st voxel layer)
+    FluenceVol = model.MC.NFR;        % Full 3D Data
+    FluenceMap = model.MC.NFR(:,:,1); % Surface Data
+    
+    % Calculate Signals
+    x_axis = linspace(-model.G.Lx/2, model.G.Lx/2, model.G.nx);
+    y_axis = linspace(-model.G.Ly/2, model.G.Ly/2, model.G.ny);
+    z_axis = linspace(0, model.G.Lz, model.G.nz);
+    [X, Y] = meshgrid(x_axis, y_axis);
+    R = sqrt(X.^2 + Y.^2);
+    
+    mask_close = (R > 0.28) & (R < 0.32); % 3mm ring
+    mask_far   = (R > 0.68) & (R < 0.72); % 7mm ring
+    
+    Signal_Close = sum(FluenceMap(mask_close), 'all');
+    Signal_Far   = sum(FluenceMap(mask_far), 'all');
+    Ratio = Signal_Far / Signal_Close;
+    
+    % Print Text Results (UPDATED to include Close Signal)
+    fprintf('  Signal Close (3mm): %e\n', Signal_Close);
+    fprintf('  Signal Far   (7mm): %e\n', Signal_Far);
+    fprintf('  Ratio: %.6f\n', Ratio);
+    
+    %% 4. Visualization & Saving
+    
+    % --- A. Custom 3D Slice Plot (FORCED LOG SCALE) ---
+    f3D = figure('Visible', 'off'); 
+    [X3, Y3, Z3] = ndgrid(x_axis, y_axis, z_axis);
+    
+    % Calculate Log Volume (avoiding log(0))
+    LogVol = log10(FluenceVol + 1e-15);
+    
+    % Create Slices at X=0 and Y=0
+    h = slice(Y3, X3, Z3, LogVol, 0, 0, []); 
+    set(h, 'EdgeColor', 'none', 'FaceColor', 'interp');
+    
+    colormap('jet');
+    caxis([-10 0]); % Fixed color scale for comparison
+    colorbar;
+    xlabel('Y [cm]'); ylabel('X [cm]'); zlabel('Depth [cm]');
+    set(gca, 'ZDir', 'reverse'); % Put depth going down
+    title({simTitle, 'Log10 Fluence Cross-Section'});
+    view(45, 30); 
+    axis equal; axis tight;
+    
+    % Save 3D Image
+    saveas(f3D, fullfile(folderName, sprintf('%dnm_3D_Slices_Log10.png', wl)));
+    close(f3D);
+    
+    % --- B. Interactive Figure (Standard MCmatlab) ---
+    fInteractive = figure('Visible', 'off');
+    model = plot(model, 'MC');
+    savefig(gcf, fullfile(folderName, sprintf('%dnm_Interactive.fig', wl)));
+    close(gcf);
 
-  %% Check other fields
-  if MCorFMC.depositionCriteria.onlyCollected && ~MCorFMC.depositionCriteria.evaluateOnlyAtEndOfLife
-    error('Error: depositionCriteria.onlyCollected = true requires depositionCriteria.evaluateOnlyAtEndOfLife = true.');
-  end
-  if MCorFMC.nExamplePaths ~= 0 && ~isscalar(MCorFMC.wavelength)
-    error('Error: Example paths are not supported when simulating broadband illumination.');
-  end
-  if isnan(MCorFMC.wavelength)
-    error('Error: No wavelength defined');
-  end
-  if MCorFMC.depositionCriteria.onlyCollected && ~MCorFMC.useLightCollector
-    error('Error: depositionCriteria.onlyCollected is true, but no light collector is defined');
-  end
-  if MCorFMC.farFieldRes && MCorFMC.boundaryType == 0
-    error('Error: If boundaryType == 0, no photons can escape to be registered in the far field. Set farFieldRes to zero or change boundaryType.');
-  end
+    % --- C. 2D Map (Top Down) ---
+    f2D = figure('Visible', 'off');
+    imagesc(x_axis, y_axis, log10(FluenceMap + 1e-15));
+    colorbar; caxis([-8 0]); colormap('jet');
+    title(sprintf('%s\nSurface Log10 Fluence', simTitle));
+    xlabel('x [cm]'); ylabel('y [cm]');
+    axis equal; hold on;
+    
+    % Draw Rings
+    theta = linspace(0, 2*pi, 100);
+    plot(0.3 * cos(theta), 0.3 * sin(theta), 'r-', 'LineWidth', 2); % 3mm
+    plot(0.7 * cos(theta), 0.7 * sin(theta), 'w-', 'LineWidth', 2); % 7mm
+    legend('Fluence', '3mm (Close)', '7mm (Far)');
+    
+    % Save 2D Image
+    saveas(f2D, fullfile(folderName, sprintf('%dnm_2D_Map.png', wl)));
+    close(f2D);
+    
+    fprintf('  Plots saved to %s\n', folderName);
+end
 
-  if simType == 2
-    if isscalar(model.MC.NFR)
-      error('Error: normalizedFluenceRate matrix not calculated for excitation light');
-    end
-    DC = model.MC.depositionCriteria;
-    if DC.minScatterings ~= 0 || ~isinf(DC.maxScatterings) || ...
-       DC.minRefractions ~= 0 || ~isinf(DC.maxRefractions) || ...
-       DC.minReflections ~= 0 || ~isinf(DC.maxReflections) || ...
-       DC.minInterfaceTransitions ~= 0 || ~isinf(DC.maxInterfaceTransitions) || ...
-       DC.onlyCollected
-      error('The excitation step must be calculated without restrictive deposition criteria in order to calculate fluorescence.');
-    end
-  else
-    if ~isscalar(model.MC.sourceDistribution) % Distributed source
-      size4D = size(model.MC.sourceDistribution);
-      size4D(4) = size(model.MC.sourceDistribution,4);
-      if ~isequal(size4D, [model.G.nx, model.G.ny, model.G.nz, numel(model.MC.wavelength)])
-        error('Error: model.MC.sourceDistribution must be of size [nx, ny, nz, nLambda]');
-      end
-      if ~isreal(model.MC.sourceDistribution) || ~all(isfinite(model.MC.sourceDistribution(:))) || ~all(model.MC.sourceDistribution(:) >= 0)
-        error('Error: model.MC.sourceDistribution must be real, finite and non-negative');
-      end
-    else % Not distributed source
-      if isnan(MCorFMC.LS.sourceType)
-        error('Error: No sourceType defined');
-      end
-      if MCorFMC.LS.sourceType == 4 && (isnan(MCorFMC.LS.FPID.radialDistr(1)) || isnan(MCorFMC.LS.AID.radialDistr(1)))
-        error('Error: lightSource.focalPlaneIntensityDistribution.radialDistr and lightSource.angularIntensityDistribution.radialDistr must both be specified when sourceType is 4');
-      end
-      if MCorFMC.LS.sourceType == 3
-        if isnan(MCorFMC.LS.FPID.radialWidth) || isnan(MCorFMC.LS.AID.radialWidth)
-          error('Error: lightSource.focalPlaneIntensityDistribution.radialWidth and lightSource.angularIntensityDistribution.radialWidth must both be specified when sourceType is 3');
-        end
-      end
-      if MCorFMC.LS.sourceType == 4
-        if isnan(MCorFMC.LS.FPID.radialWidth)
-          error('Error: lightSource.focalPlaneIntensityDistribution.radialWidth must be specified when sourceType is 4');
-        end      
-        if ~isequal(MCorFMC.LS.AID.radialDistr, 2) && isnan(MCorFMC.LS.FPID.radialWidth) % If non-Lambertian source
-          error('Error: lightSource.angularIntensityDistribution.radialWidth must be specified when sourceType is 4 and the source is non-Lambertian');
-        end
-      end
-      if MCorFMC.LS.sourceType == 5
-        if isnan(MCorFMC.LS.FPID.XDistr(1))
-          error('Error: lightSource.focalPlaneIntensityDistribution.XDistr must be specified when sourceType is 5');
-        end
-        if isnan(MCorFMC.LS.FPID.XWidth)
-          error('Error: lightSource.focalPlaneIntensityDistribution.Xwidth must be specified when sourceType is 5');
-        end
-        if isnan(MCorFMC.LS.FPID.YDistr(1))
-          error('Error: lightSource.focalPlaneIntensityDistribution.YDistr must be specified when sourceType is 5');
-        end
-        if isnan(MCorFMC.LS.FPID.YWidth)
-          error('Error: lightSource.focalPlaneIntensityDistribution.YWidth must be specified when sourceType is 5');
-        end
-        if isnan(MCorFMC.LS.AID.XDistr(1))
-          error('Error: lightSource.angularIntensityDistribution.XDistr must be specified when sourceType is 5');
-        end
-        if MCorFMC.LS.AID.XDistr(1) ~= 2 && isnan(MCorFMC.LS.AID.XWidth)
-          error('Error: lightSource.angularIntensityDistribution.Xwidth must be specified when sourceType is 5 and the distribution is non-Lambertian');
-        end
-        if isnan(MCorFMC.LS.AID.YDistr(1))
-          error('Error: lightSource.angularIntensityDistribution.YDistr must be specified when sourceType is 5');
-        end
-        if MCorFMC.LS.AID.YDistr(1) ~= 2 && isnan(MCorFMC.LS.AID.YWidth)
-          error('Error: lightSource.angularIntensityDistribution.YWidth must be specified when sourceType is 5 and the distribution is non-Lambertian');
-        end
-        if xor(MCorFMC.LS.AID.XDistr == 2,MCorFMC.LS.AID.YDistr == 2)
-          error('Error: lightSource.angularIntensityDistribution.XDistr and lightSource.angularIntensityDistribution.YDistr must either both be set to cosine (Lambertian), or neither');
-        end
-      end
-      if size(MCorFMC.LS.FPID.radialDistr,1) > 1 || size(MCorFMC.LS.FPID.XDistr,1) > 1 || size(MCorFMC.LS.FPID.YDistr,1) > 1 ||...
-          size(MCorFMC.LS.AID.radialDistr,1) > 1 || size(MCorFMC.LS.AID.XDistr,1) > 1 || size(MCorFMC.LS.AID.YDistr,1) > 1
-        error('Error: Beam distribution functions must be scalars or row-vectors, not column-vectors');
-      end
-      if (numel(MCorFMC.LS.FPID.radialDistr) > 1 && numel(MCorFMC.LS.FPID.radialDistr) < 1000) ||...
-          (numel(MCorFMC.LS.FPID.XDistr)      > 1 && numel(MCorFMC.LS.FPID.XDistr)      < 1000) ||...
-          (numel(MCorFMC.LS.FPID.YDistr)      > 1 && numel(MCorFMC.LS.FPID.YDistr)      < 1000) ||...
-          (numel(MCorFMC.LS.AID.radialDistr) > 1 && numel(MCorFMC.LS.AID.radialDistr) < 1000) ||...
-          (numel(MCorFMC.LS.AID.XDistr)      > 1 && numel(MCorFMC.LS.AID.XDistr)      < 1000) ||...
-          (numel(MCorFMC.LS.AID.YDistr)      > 1 && numel(MCorFMC.LS.AID.YDistr)      < 1000)
-        error('Error: Beam definition distributions must have 1000 elements (or more, if necessary)');
-      end
-    end
-  end
+fprintf('\nBatch Simulation Complete.\n');
 
-  if MCorFMC.useLightCollector
-    %% Check to ensure that the light collector is not inside the cuboid and set res to 1 if using fiber
-    if MCorFMC.boundaryType == 0
-      error('Error: If boundaryType == 0, no photons can escape to be registered on the light collector. Disable light collector or change boundaryType.');
-    end
-    if isfinite(MCorFMC.LC.f)
-      xLCC = MCorFMC.LC.x - MCorFMC.LC.f*sin(MCorFMC.LC.theta)*cos(MCorFMC.LC.phi); % x position of Light Collector Center
-      yLCC = MCorFMC.LC.y - MCorFMC.LC.f*sin(MCorFMC.LC.theta)*sin(MCorFMC.LC.phi); % y position
-      zLCC = MCorFMC.LC.z - MCorFMC.LC.f*cos(MCorFMC.LC.theta);                     % z position
-    else
-      xLCC = MCorFMC.LC.x;
-      yLCC = MCorFMC.LC.y;
-      zLCC = MCorFMC.LC.z;
-      if MCorFMC.LC.res ~= 1
-        error('Error: lightCollector.res must be 1 when lightCollector.f is Inf');
-      end
-    end
+%% Geometry Function
+function M = geometryDefinition(X,Y,Z,parameters)
+  % Gel starts exactly at Z=0. No Air layer on top.
+  M = 2 * ones(size(X)); 
+end
 
-    if (abs(xLCC)               < G.nx*G.dx/2 && ...
-        abs(yLCC)               < G.ny*G.dy/2 && ...
-        abs(zLCC - G.nz*G.dz/2) < G.nz*G.dz/2)
-      error('Error: Light collector center (%.4f,%.4f,%.4f) is inside cuboid',xLCC,yLCC,zLCC);
-    end
-  end
+%% Media Properties Function
+function mediaProperties = mediaPropertiesFunc(parameters)
+  % Retrieve the dynamic mu_a
+  current_mua = parameters{1}; 
+  
+  mediaProperties = MCmatlab.mediumProperties;
+  
+  % Medium 1: AIR (Used for outside boundary definition)
+  j=1;
+  mediaProperties(j).name = 'air';
+  mediaProperties(j).mua = 1e-8; mediaProperties(j).mus = 1e-8; mediaProperties(j).g = 1; mediaProperties(j).n = 1.0;
+  
+  % Medium 2: GEL PHANTOM (Dynamic)
+  j=2;
+  mediaProperties(j).name = 'Gel Phantom';
+  mediaProperties(j).mua = current_mua; 
+  mediaProperties(j).mus = 100.0; 
+  mediaProperties(j).g   = 0.9;   
+  mediaProperties(j).n   = 1.33;  
 end
