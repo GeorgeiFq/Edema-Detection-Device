@@ -410,6 +410,12 @@ class App:
         # Devices seen (addr -> name)
         self.devices_seen = {}
 
+        # Continuous autorun state
+        self.continuous_running = False
+        self.continuous_total = 0
+        self.continuous_remaining = 0
+        self.continuous_delay_ms = 2000  # pause between runs (ms)
+
         # ===== Top bar =====
         top = ttk.Frame(root, padding=8)
         top.grid(row=0, column=0, sticky=E+W)
@@ -487,6 +493,24 @@ class App:
         for ch in range(4):
             self._mk_button(led_off, f"LED {ch} OFF", lambda c=ch: self._set_and_send_pwm(c, 0), 0, ch)
 
+        # ===== Continuous Autorun controls =====
+        cont = ttk.LabelFrame(btns, text="Continuous Autorun (Full Cycle Run: r)")
+        cont.grid(row=4, column=0, columnspan=7, sticky=E+W, pady=(8,0))
+
+        ttk.Label(cont, text="Number of runs:").grid(row=0, column=0, padx=(4,4), sticky=E)
+        self.cont_runs_var = StringVar(value="1")
+        self.cont_runs_entry = ttk.Entry(cont, textvariable=self.cont_runs_var, width=8, justify="right")
+        self.cont_runs_entry.grid(row=0, column=1, padx=(0,8), sticky=W)
+
+        self.btn_cont_start = ttk.Button(cont, text="Start Continuous Autorun", command=self._start_continuous_autorun)
+        self.btn_cont_start.grid(row=0, column=2, padx=(4,4), sticky=E+W)
+
+        self.btn_cont_stop = ttk.Button(cont, text="Stop", command=self._stop_continuous_autorun)
+        self.btn_cont_stop.grid(row=0, column=3, padx=(4,4), sticky=E+W)
+
+        for c in range(4):
+            cont.grid_columnconfigure(c, weight=1)
+
         # ===== Devices panel =====
         devs = ttk.LabelFrame(root, text="I²C Devices (from last scan)", padding=8)
         devs.grid(row=2, column=0, sticky=E+W, padx=8, pady=(0,8))
@@ -554,6 +578,8 @@ class App:
         self._append_console("[INFO] Serial closed.\n")
         self.btn_connect.config(state="normal")
         self.btn_disconnect.config(state=DISABLED)
+        # If serial closes, stop continuous autorun
+        self.continuous_running = False
 
     def send_cmd(self, cmd: str):
         if not self.serial_worker:
@@ -577,6 +603,18 @@ class App:
         except Exception as e:
             self._append_console(f"[ERROR] send failed: {e}\n")
 
+    def _raw_send(self, s: str):
+        """Send a raw command string without autorun CSV bookkeeping."""
+        if not self.serial_worker:
+            messagebox.showwarning("Not Connected", "Connect to a serial port first.")
+            return
+        line = s.strip() + "\n"
+        try:
+            self.serial_worker.send(line)
+            self._append_console(f"> {s.strip()}\n")
+        except Exception as e:
+            self._append_console(f"[ERROR] send failed: {e}\n")
+
     def scan_i2c(self):
         self.devices_seen.clear()
         self._refresh_devices_panel()
@@ -594,6 +632,61 @@ class App:
         else:
             cmd = f"gslope {ch} {pwm_csv}"
         self.send_cmd(cmd)
+
+    # ---- Continuous autorun helpers ----
+    def _start_continuous_autorun(self):
+        if not self.serial_worker:
+            messagebox.showwarning("Not Connected", "Connect to a serial port first.")
+            return
+        if self.continuous_running:
+            messagebox.showinfo("Continuous Autorun", "Continuous autorun is already running.")
+            return
+        txt = self.cont_runs_var.get().strip()
+        try:
+            n_runs = int(txt)
+        except ValueError:
+            messagebox.showwarning("Continuous Autorun", f"Invalid number of runs: '{txt}'.")
+            return
+        if n_runs <= 0:
+            messagebox.showwarning("Continuous Autorun", "Number of runs must be a positive integer.")
+            return
+
+        self.continuous_running = True
+        self.continuous_total = n_runs
+        self.continuous_remaining = n_runs
+        self._append_console(f"[INFO] Starting continuous autorun for {n_runs} runs.\n")
+
+        # Launch first run immediately
+        self._continuous_autorun_next()
+
+    def _stop_continuous_autorun(self):
+        if self.continuous_running:
+            self.continuous_running = False
+            self._append_console("[INFO] Continuous autorun stopped by user.\n")
+        else:
+            self._append_console("[INFO] Continuous autorun is not running.\n")
+
+    def _continuous_autorun_next(self):
+        if not self.continuous_running:
+            return
+        if not self.serial_worker:
+            self._append_console("[WARN] Continuous autorun stopped: serial disconnected.\n")
+            self.continuous_running = False
+            return
+        if self.autorun_active:
+            # Still in the middle of a run; this function should normally be called
+            # only after autorun_end, but guard just in case.
+            return
+
+        if self.continuous_remaining <= 0:
+            self._append_console(f"[INFO] Continuous autorun complete ({self.continuous_total} runs).\n")
+            self.continuous_running = False
+            return
+
+        self.continuous_remaining -= 1
+        current_idx = self.continuous_total - self.continuous_remaining
+        self._append_console(f"[INFO] Continuous autorun: launching run {current_idx} of {self.continuous_total}.\n")
+        self.send_cmd("r")
 
     def _poll_serial(self):
         try:
@@ -696,6 +789,14 @@ class App:
                 self.csv.write_summaries()
             self.autorun_active = False
             self._append_console(raw + "\n")
+
+            # If continuous autorun is enabled, schedule the next run
+            if self.continuous_running:
+                if self.continuous_remaining > 0:
+                    self.root.after(self.continuous_delay_ms, self._continuous_autorun_next)
+                else:
+                    self._append_console(f"[INFO] Continuous autorun complete ({self.continuous_total} runs).\n")
+                    self.continuous_running = False
             return
 
         self._append_console(raw + "\n")
