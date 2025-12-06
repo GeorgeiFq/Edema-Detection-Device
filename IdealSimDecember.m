@@ -1,161 +1,207 @@
-%% Description
-% Double Loop Simulation:
-% Loop 1: Wavelength Scenarios (1450nm vs 1650nm)
-% Loop 2: Scattering Coefficients (10 to 10000)
-% Output: Comparison plot of Absorbed Fraction vs Scattering.
+%% ========================================================================
+% Idealized Reflectance Simulation vs mus'
+% - Pencil beam at gel surface
+% - Detector at 3 mm and 7 mm SDS
+% - 1450 and 1650 nm (mua from water mix)
+% - Larger (idealized) detector area for better stats
+% - Fixed number of photons per run
+% - NOW: store and plot % photons collected vs mus' for each LED
+% ========================================================================
 
-%% MCmatlab abbreviations
-% G: Geometry, MC: Monte Carlo, FMC: Fluorescence Monte Carlo, HS: Heat
-% simulation, M: Media array, FR: Fluence rate, FD: Fractional damage.
-
-%% Geometry definition
-clc;
+clc; clear;
 MCmatlab.closeMCmatlabFigures();
 model = MCmatlab.model;
 
-%% 1. Define Experimental Coefficients
-ConcentrationWater = 0.8; 
-ConcentrationGel   = 0.1;
-ConcentrationIL    = 0.1;
+%% ---------------- GEOMETRY ----------------
+model.G.nx = 101;
+model.G.ny = 101;
+model.G.nz = 150;
 
-ExtinctionWater1450    = 28.8; 
-ExtinctionWater1650    = 5.7; 
-ExtinctionGel      = 0; 
-ExtinctionIL       = 0;
+% Gel size (cm): 75 x 56 x 15 mm
+model.G.Lx = 7.5;
+model.G.Ly = 5.6;
+model.G.Lz = 1.5;
 
-% Calculate Absorption (Mua) for both wavelengths
-mua1450 = ConcentrationWater*ExtinctionWater1450 + ConcentrationGel*ExtinctionGel + ConcentrationIL*ExtinctionIL;
-mua1650 = ConcentrationWater*ExtinctionWater1650 + ConcentrationGel*ExtinctionGel + ConcentrationIL*ExtinctionIL;
+model.G.mediaPropertiesFunc = @mediaPropertiesFunc;
+model.G.geomFunc            = @geometryDefinition;
 
-% Create lists for the Outer Loop
-muaList = [mua1450, mua1650];
-wavelengthNames = {'1450 nm', '1650 nm'};
+% Don't call plot(model,'G') before mediaPropParams is set
 
-% Create list for the Inner Loop
-musValues = [10, 100, 1000, 10000]; 
+%% ---------------- ABSORPTION (FROM MIXTURE) ----------------
+ConcentrationWater    = 0.8;
+ExtinctionWater1450   = 28.8;  % [cm^-1]
+ExtinctionWater1650   = 5.7;   % [cm^-1]
 
-% Initialize a matrix to store results for the final plot
-% Rows = Wavelengths, Columns = Scattering values
-resultsAbsorbed = zeros(2, length(musValues));
+mua1450 = ConcentrationWater * ExtinctionWater1450;  % 23.04 cm^-1
+mua1650 = ConcentrationWater * ExtinctionWater1650;  % 4.56 cm^-1
 
-%% 2. Setup Base Model
-model.G.nx                = 101; 
-model.G.ny                = 101; 
-model.G.nz                = 150; 
-model.G.Lx                = 7.5; 
-model.G.Ly                = 5.6; 
-model.G.Lz                = 1.5; 
-model.G.mediaPropertiesFunc = @mediaPropertiesFunc; 
-model.G.geomFunc            = @geometryDefinition; 
+wavelengthList = [1450, 1650];
+muaList        = [mua1450, mua1650];
+wlLabels       = {'1450 nm','1650 nm'};
 
-% Plot geometry once
-model = plot(model,'G');
+%% ---------------- USER-DEFINED mus' VALUES ----------------
+musList = [3 5 7 10 15 20 25 30 40 50];   % [cm^-1] tweak as you like
+nMus    = length(musList);
 
-% Simulation Parameters
-model.MC.simulationTimeRequested  = .1; 
-model.MC.matchedInterfaces        = true; 
-model.MC.boundaryType             = 1; 
-model.MC.lightSource.sourceType   = 0; 
-model.MC.lightSource.xFocus       = 0; 
-model.MC.lightSource.yFocus       = 0; 
-model.MC.lightSource.zFocus       = 0; 
-model.MC.lightSource.theta        = 0; 
-model.MC.lightSource.phi          = 0; 
+%% ---------------- STORAGE FOR FRACTIONS ----------------
+% Fractions (not %) collected for each case, indexed by mus
+frac1450_SDS3 = zeros(1, nMus);
+frac1450_SDS7 = zeros(1, nMus);
+frac1650_SDS3 = zeros(1, nMus);
+frac1650_SDS7 = zeros(1, nMus);
 
-%% 3. The Double Simulation Loop (CORRECTED)
+%% ---------------- BASE MONTE CARLO SETTINGS ----------------
+% MCmatlab wants positive time; we'll also cap by photon count
+model.MC.simulationTimeRequested = 1;      % [min] must be > 0
+model.MC.nPhotonsRequested       = 2e7;    % photons per run
 
-% Calculate Voxel Volume (needed for integration)
-dx = model.G.Lx / model.G.nx;
-dy = model.G.Ly / model.G.ny;
-dz = model.G.Lz / model.G.nz;
-voxelVolume = dx * dy * dz;
+model.MC.matchedInterfaces       = true;
+model.MC.boundaryType            = 1;
 
-for w = 1:length(muaList) % --- OUTER LOOP (Wavelengths) ---
-    currentMua = muaList(w);
-    currentWavelengthName = wavelengthNames{w};
-    
-    for s = 1:length(musValues) % --- INNER LOOP (Scattering) ---
-        currentMus = musValues(s);
-        
-        fprintf('------------------------------------------------\n');
-        fprintf('Scenario: %s | Mus: %d | Mua: %.2f\n', currentWavelengthName, currentMus, currentMua);
-        
-        % Pass parameters
-        model.MC.wavelength = str2double(currentWavelengthName(1:4)); 
-        model.G.mediaPropParams = {currentMus, currentMua};
-        
-        % Run Simulation
-        model = runMonteCarlo(model);
-        
-        % Plot (Optional - can comment out to speed up)
-        model = plot(model,'MC');
-        drawnow;
-        
-        % --- EXTRACT DATA (FIXED METHOD) ---
-        % We calculate total absorption by summing: NFR * mua * Volume
-        % Note: This assumes the whole grid is tissue (valid since zSurface=0)
-        
-        totalFluenceSum = sum(model.MC.NFR(:));
-        totalAbsorbedFraction = totalFluenceSum * currentMua * voxelVolume;
-        
-        % Store result
-        resultsAbsorbed(w, s) = totalAbsorbedFraction;
-        
-        fprintf('Result: %.1f%% Absorbed\n', totalAbsorbedFraction * 100);
+% Pencil beam at gel surface (slightly inside tissue)
+model.MC.lightSource.sourceType = 0;    % Pencil beam
+model.MC.lightSource.xFocus = 0;
+model.MC.lightSource.yFocus = 0;
+model.MC.lightSource.zFocus = 0.03 + 1e-4;  % just below air–tissue interface
+model.MC.lightSource.theta  = 0;
+model.MC.lightSource.phi    = 0;
+
+model.MC.useLightCollector = true;
+
+% --------- COLLECTOR: working style, just larger ---------
+model.MC.lightCollector.f         = 0.1;   % finite focal length (like example)
+model.MC.lightCollector.diam      = 0.5;   % [cm] 5 mm diameter (bigger than APX)
+model.MC.lightCollector.fieldSize = 0.5;   % [cm] imaged field diameter
+model.MC.lightCollector.NA        = 0.22;  % same as example
+model.MC.lightCollector.res       = 50;    % grid on detector plane
+
+% Orientation: same as working example
+model.MC.lightCollector.theta     = 0;     % [rad]
+model.MC.lightCollector.phi       = pi/2;  % [rad]
+
+%% ---------------- SDS LIST ----------------
+SDSlist_cm  = [0.3, 0.7];      % 3 mm and 7 mm
+SDSlabels   = {'3 mm','7 mm'};
+
+%% ========================================================================
+% MAIN LOOP OVER mus'
+% ========================================================================
+for m = 1:nMus
+    mus = musList(m);
+    fprintf('\n================ mus'' = %.1f cm^-1 ================\n', mus);
+
+    % For each SDS (3 mm and 7 mm)
+    for sdsIdx = 1:numel(SDSlist_cm)
+        sds_cm   = SDSlist_cm(sdsIdx);
+        SDSlabel = SDSlabels{sdsIdx};
+
+        % Set detector position for this SDS
+        model.MC.lightCollector.x = 0;
+        model.MC.lightCollector.y = -sds_cm;
+        model.MC.lightCollector.z = 0;   % at top boundary (air side)
+
+        % For each wavelength (1450 & 1650 nm)
+        for w = 1:2
+            wl    = wavelengthList(w);
+            mua   = muaList(w);
+            label = wlLabels{w};
+
+            fprintf('Running %s @ SDS %s, mus'' = %.1f ...\n', ...
+                    label, SDSlabel, mus);
+
+            % Set wavelength
+            model.MC.wavelength = wl;
+
+            % Pass mus and mua to mediaPropertiesFunc
+            model.G.mediaPropParams = {mus, mua};
+
+            % Run Monte Carlo
+            model = runMonteCarlo(model);
+
+            % Fraction of launched photon packets that hit the detector
+            fracCollected = model.MC.nPhotonsCollected / model.MC.nPhotons;
+
+            fprintf('  -> Fraction collected (%s, SDS %s): %.6g (%.6f %%)\n', ...
+                    label, SDSlabel, fracCollected, fracCollected * 100);
+
+            % -------- STORE FOR PLOTTING --------
+            if w == 1  % 1450 nm
+                if sdsIdx == 1      % 3 mm
+                    frac1450_SDS3(m) = fracCollected;
+                else                % 7 mm
+                    frac1450_SDS7(m) = fracCollected;
+                end
+            else       % 1650 nm
+                if sdsIdx == 1      % 3 mm
+                    frac1650_SDS3(m) = fracCollected;
+                else                % 7 mm
+                    frac1650_SDS7(m) = fracCollected;
+                end
+            end
+        end
     end
 end
 
-%% 4. Final Comparison Plot
-figure('Name', 'Absorption vs Scattering Comparison', 'NumberTitle', 'off');
-hold on;
+%% ========================================================================
+% PLOTTING: % photons collected vs mus' for each LED
+% ========================================================================
+
+% Convert to percent
+pct1450_SDS3 = frac1450_SDS3 * 100;
+pct1450_SDS7 = frac1450_SDS7 * 100;
+pct1650_SDS3 = frac1650_SDS3 * 100;
+pct1650_SDS7 = frac1650_SDS7 * 100;
+
+% ----- 1450 nm -----
+figure;
+plot(musList, pct1450_SDS3, '-o', 'LineWidth', 2); hold on;
+plot(musList, pct1450_SDS7, '-s', 'LineWidth', 2);
 grid on;
+xlabel('\mu_s'' [cm^{-1}]');
+ylabel('Photons collected [%]');
+title('1450 nm: Collected photons vs \mu_s''');
+legend('SDS = 3 mm', 'SDS = 7 mm', 'Location', 'best');
 
-% Plot 1450nm Data (Row 1)
-semilogx(musValues, resultsAbsorbed(1,:)*100, '-o', 'LineWidth', 2, 'DisplayName', '1450 nm (High Absorption)');
+% ----- 1650 nm -----
+figure;
+plot(musList, pct1650_SDS3, '-o', 'LineWidth', 2); hold on;
+plot(musList, pct1650_SDS7, '-s', 'LineWidth', 2);
+grid on;
+xlabel('\mu_s'' [cm^{-1}]');
+ylabel('Photons collected [%]');
+title('1650 nm: Collected photons vs \mu_s''');
+legend('SDS = 3 mm', 'SDS = 7 mm', 'Location', 'best');
 
-% Plot 1650nm Data (Row 2)
-semilogx(musValues, resultsAbsorbed(2,:)*100, '-s', 'LineWidth', 2, 'DisplayName', '1650 nm (Low Absorption)');
-
-xlabel('Scattering Coefficient \mu_s [cm^{-1}]');
-ylabel('Total Absorbed Fraction [%]');
-title('Impact of Scattering on Absorption Depth');
-legend('show');
-ylim([0 100]);
-
-% Add annotation
-annotation('textbox', [0.15, 0.2, 0.3, 0.1], 'String', 'High scattering causes reflectance (lower absorption)', 'FitBoxToText', 'on', 'BackgroundColor', 'white');
-
-hold off;
-
-%% Helper Functions
-
+%% ========================================================================
+% GEOMETRY FUNCTION
+% ========================================================================
 function M = geometryDefinition(X,Y,Z,parameters)
-  zSurface = 0.0;
-  M = ones(size(X)); % Air
-  M(Z > zSurface) = 2; % "Standard" tissue
+  zSurface = 0.03;      % [cm] air–tissue boundary
+  M = ones(size(X));    % 1 = air
+  M(Z > zSurface) = 2;  % 2 = tissue
 end
 
+%% ========================================================================
+% MEDIA PROPERTIES FUNCTION
+% ========================================================================
 function mediaProperties = mediaPropertiesFunc(parameters)
-  % Unpack parameters
-  if isempty(parameters)
-      dynamicMus = 100;
-      dynamicMua = 1;
-  else
-      dynamicMus = parameters{1}; 
-      dynamicMua = parameters{2}; 
-  end
-
   mediaProperties = MCmatlab.mediumProperties;
-  
-  j=1;
-  mediaProperties(j).name  = 'air';
-  mediaProperties(j).mua   = 1e-8; 
-  mediaProperties(j).mus   = 1e-8; 
-  mediaProperties(j).g     = 1; 
-  
-  j=2;
-  mediaProperties(j).name  = 'standard tissue';
-  mediaProperties(j).mua   = dynamicMua; 
-  mediaProperties(j).mus   = dynamicMus; 
-  mediaProperties(j).g     = 0.9; 
+
+  % Expect parameters = {mus, mua}
+  mus = parameters{1};
+  mua = parameters{2};
+
+  % Medium 1: air
+  j = 1;
+  mediaProperties(j).name = 'air';
+  mediaProperties(j).mua  = 1e-8;
+  mediaProperties(j).mus  = 1e-8;
+  mediaProperties(j).g    = 1;
+
+  % Medium 2: tissue
+  j = 2;
+  mediaProperties(j).name = 'tissue';
+  mediaProperties(j).mua  = mua;
+  mediaProperties(j).mus  = mus;
+  mediaProperties(j).g    = 0.9;
 end
