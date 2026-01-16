@@ -1,0 +1,501 @@
+#include <Wire.h>
+
+// ============================================================
+// MPQ3326 Modular I2C Driver + Register Dump Utility
+// + Added: Arduino Nano 33 analog read on A0 via CLI ("a0", "a0 on", "a0 off")
+// ============================================================
+
+// ---------- MPQ3326 register range ----------
+static const uint8_t MPQ_REG_FIRST = 0x00;
+static const uint8_t MPQ_REG_LAST  = 0x39;
+static const uint8_t MPQ_REG_COUNT = (MPQ_REG_LAST - MPQ_REG_FIRST + 1);
+
+// MPQ3326 possible 7-bit I2C addresses
+static const uint8_t MPQ_ADDR_MIN = 0x30;
+static const uint8_t MPQ_ADDR_MAX = 0x39;
+
+// Set to 0 to auto-detect; otherwise hardcode your address (0x30..0x39)
+static uint8_t g_mpqAddr = 0x30;
+
+// Storage for register values (optional; used by dump)
+static uint8_t g_regs[MPQ_REG_COUNT];
+
+// ============================================================
+// Current control constants (RISET-based)
+// ============================================================
+// You stated RISET = 10k to GND at ISET pin.
+static const float RISET_KOHM = 10.0f;
+// Datasheet: ILED_FS(mA) = 500 / RISET(kOhm)
+static const float ISET_mA    = 500.0f / RISET_KOHM;  // -> 50 mA for 10k
+
+// ============================================================
+// NEW: Analog A0 read configuration (Nano 33: 3.3V ADC)
+// ============================================================
+static const uint8_t A0_PIN = A0;
+// Many Nano 33 cores default to 10-bit ADC (0..1023). We will enforce 10-bit.
+static const uint8_t ADC_BITS = 10;
+static const int     ADC_MAX  = (1 << ADC_BITS) - 1;   // 1023
+static const float   ADC_VREF = 3.3f;                  // Nano 33 analog reference (typ.)
+
+static bool g_a0StreamEnable = false;
+static uint32_t g_a0LastMs = 0;
+static const uint32_t A0_STREAM_PERIOD_MS = 200;       // adjust as desired
+
+static inline float adcCountsToVolts(int counts) {
+  if (counts < 0) counts = 0;
+  if (counts > ADC_MAX) counts = ADC_MAX;
+  return (ADC_VREF * (float)counts) / (float)ADC_MAX;
+}
+
+void printA0Once() {
+  // Optional: average a few samples to reduce noise
+  const int N = 8;
+  long sum = 0;
+  for (int i = 0; i < N; i++) {
+    sum += analogRead(A0_PIN);
+    delayMicroseconds(200);
+  }
+  int counts = (int)(sum / N);
+  float v = adcCountsToVolts(counts);
+
+  Serial.print(F("A0: "));
+  Serial.print(counts);
+  Serial.print(F(" / "));
+  Serial.print(ADC_MAX);
+  Serial.print(F("  -> "));
+  Serial.print(v, 4);
+  Serial.println(F(" V"));
+}
+
+// ------------------------ Register labels ------------------------
+const __FlashStringHelper* mpq3326RegLabel(uint8_t reg) {
+  switch (reg) {
+    case 0x00: return F("PWM Dimming Frequency Setting (FPWM[1:0])");
+    case 0x01: return F("Control Register (FLTEN,LATCH,STH,SLEW,PS_EN,EN)");
+    case 0x02: return F("Refresh + OTP Fault (FT_OTP, FRFSH[1:0])");
+    case 0x03: return F("Refresh Frequency MSB (FRFSH[9:2])");
+    case 0x04: return F("Channel Enable (CH9EN..CH16EN)");
+    case 0x05: return F("Channel Enable (CH1EN..CH8EN)");
+    case 0x06: return F("Open Fault Flags (CH9O..CH16O) [R]");
+    case 0x07: return F("Open Fault Flags (CH1O..CH8O) [R]");
+    case 0x08: return F("Short Fault Flags (CH9S..CH16S) [R]");
+    case 0x09: return F("Short Fault Flags (CH1S..CH8S) [R]");
+
+    case 0x0A: return F("ICH1 (Analog dim 6-bit)");
+    case 0x0B: return F("PWM1 LSB (PWM1[3:0])");
+    case 0x0C: return F("PWM1 MSB (PWM1[11:4])");
+
+    case 0x0D: return F("ICH2 (Analog dim 6-bit)");
+    case 0x0E: return F("PWM2 LSB (PWM2[3:0])");
+    case 0x0F: return F("PWM2 MSB (PWM2[11:4])");
+
+    case 0x10: return F("ICH3 (Analog dim 6-bit)");
+    case 0x11: return F("PWM3 LSB (PWM3[3:0])");
+    case 0x12: return F("PWM3 MSB (PWM3[11:4])");
+
+    case 0x13: return F("ICH4 (Analog dim 6-bit)");
+    case 0x14: return F("PWM4 LSB (PWM4[3:0])");
+    case 0x15: return F("PWM4 MSB (PWM4[11:4])");
+
+    case 0x16: return F("ICH5 (Analog dim 6-bit)");
+    case 0x17: return F("PWM5 LSB (PWM5[3:0])");
+    case 0x18: return F("PWM5 MSB (PWM5[11:4])");
+
+    case 0x19: return F("ICH6 (Analog dim 6-bit)");
+    case 0x1A: return F("PWM6 LSB (PWM6[3:0])");
+    case 0x1B: return F("PWM6 MSB (PWM6[11:4])");
+
+    case 0x1C: return F("ICH7 (Analog dim 6-bit)");
+    case 0x1D: return F("PWM7 LSB (PWM7[3:0])");
+    case 0x1E: return F("PWM7 MSB (PWM7[11:4])");
+
+    case 0x1F: return F("ICH8 (Analog dim 6-bit)");
+    case 0x20: return F("PWM8 LSB (PWM8[3:0])");
+    case 0x21: return F("PWM8 MSB (PWM8[11:4])");
+
+    case 0x22: return F("ICH9 (Analog dim 6-bit)");
+    case 0x23: return F("PWM9 LSB (PWM9[3:0])");
+    case 0x24: return F("PWM9 MSB (PWM9[11:4])");
+
+    case 0x25: return F("ICH10 (Analog dim 6-bit)");
+    case 0x26: return F("PWM10 LSB (PWM10[3:0])");
+    case 0x27: return F("PWM10 MSB (PWM10[11:4])");
+
+    case 0x28: return F("ICH11 (Analog dim 6-bit)");
+    case 0x29: return F("PWM11 LSB (PWM11[3:0])");
+    case 0x2A: return F("PWM11 MSB (PWM11[11:4])");
+
+    case 0x2B: return F("ICH12 (Analog dim 6-bit)");
+    case 0x2C: return F("PWM12 LSB (PWM12[3:0])");
+    case 0x2D: return F("PWM12 MSB (PWM12[11:4])");
+
+    case 0x2E: return F("ICH13 (Analog dim 6-bit)");
+    case 0x2F: return F("PWM13 LSB (PWM13[3:0])");
+    case 0x30: return F("PWM13 MSB (PWM13[11:4])");
+
+    case 0x31: return F("ICH14 (Analog dim 6-bit)");
+    case 0x32: return F("PWM14 LSB (PWM14[3:0])");
+    case 0x33: return F("PWM14 MSB (PWM14[11:4])");
+
+    case 0x34: return F("ICH15 (Analog dim 6-bit)");
+    case 0x35: return F("PWM15 LSB (PWM15[3:0])");
+    case 0x36: return F("PWM15 MSB (PWM15[11:4])");
+
+    case 0x37: return F("ICH16 (Analog dim 6-bit)");
+    case 0x38: return F("PWM16 LSB (PWM16[3:0])");
+    case 0x39: return F("PWM16 MSB (PWM16[11:4])");
+
+    default:   return F("Reserved/Unknown");
+  }
+}
+
+// ============================================================
+// Modular MPQ3326 I2C API
+// ============================================================
+
+bool mpq3326Ping(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return (Wire.endTransmission() == 0);
+}
+
+bool mpq3326WriteReg(uint8_t addr, uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  Wire.write(val);
+  return (Wire.endTransmission() == 0);
+}
+
+bool mpq3326ReadReg(uint8_t addr, uint8_t reg, uint8_t &val) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false; // repeated start
+  if (Wire.requestFrom((int)addr, 1) != 1) return false;
+  val = Wire.read();
+  return true;
+}
+
+bool mpq3326ReadAllRegs(uint8_t addr, uint8_t *outRegs, size_t outLen) {
+  if (!outRegs || outLen < MPQ_REG_COUNT) return false;
+
+  for (uint8_t reg = MPQ_REG_FIRST; reg <= MPQ_REG_LAST; reg++) {
+    uint8_t v = 0;
+    if (!mpq3326ReadReg(addr, reg, v)) return false;
+    outRegs[reg - MPQ_REG_FIRST] = v;
+  }
+  return true;
+}
+
+bool mpq3326DumpAllRegs(uint8_t addr) {
+  if (!mpq3326ReadAllRegs(addr, g_regs, MPQ_REG_COUNT)) {
+    Serial.println(F("ERROR: mpq3326ReadAllRegs failed."));
+    return false;
+  }
+
+  Serial.println(F("Full register dump (0x00..0x39):"));
+  for (uint8_t reg = MPQ_REG_FIRST; reg <= MPQ_REG_LAST; reg++) {
+    uint8_t val = g_regs[reg - MPQ_REG_FIRST];
+
+    Serial.print(F("0x"));
+    if (reg < 0x10) Serial.print('0');
+    Serial.print(reg, HEX);
+
+    Serial.print(F(" = 0x"));
+    if (val < 0x10) Serial.print('0');
+    Serial.print(val, HEX);
+
+    Serial.print(F("  | "));
+    Serial.println(mpq3326RegLabel(reg));
+  }
+  return true;
+}
+
+uint8_t mpq3326AutodetectAddr() {
+  for (uint8_t a = MPQ_ADDR_MIN; a <= MPQ_ADDR_MAX; a++) {
+    if (mpq3326Ping(a)) return a;
+  }
+  return 0;
+}
+
+bool mpq3326ZeroRegs_0A_to_15(uint8_t addr) {
+  for (uint8_t reg = 0x0A; reg <= 0x15; reg++) {
+    if (!mpq3326WriteReg(addr, reg, 0x00)) return false;
+  }
+  return true;
+}
+
+// ============================================================
+// Channel helpers for analog/PWM dimming (CH1..CH4)
+// ============================================================
+
+static inline uint8_t mpqICHReg(uint8_t ch) {
+  return (uint8_t)(0x0A + (ch - 1) * 3);
+}
+static inline uint8_t mpqPWMLsbReg(uint8_t ch) {
+  return (uint8_t)(mpqICHReg(ch) + 1);
+}
+static inline uint8_t mpqPWMMsbReg(uint8_t ch) {
+  return (uint8_t)(mpqICHReg(ch) + 2);
+}
+
+bool mpq3326SetPWM12(uint8_t addr, uint8_t ch, uint16_t pwm12) {
+  if (ch < 1 || ch > 16) return false;
+  if (pwm12 > 4095) pwm12 = 4095;
+
+  uint8_t lsb = (uint8_t)(pwm12 & 0x0F);
+  uint8_t msb = (uint8_t)((pwm12 >> 4) & 0xFF);
+
+  if (!mpq3326WriteReg(addr, mpqPWMLsbReg(ch), lsb)) return false;
+  if (!mpq3326WriteReg(addr, mpqPWMMsbReg(ch), msb)) return false;
+  return true;
+}
+
+bool mpq3326SetICH(uint8_t addr, uint8_t ch, uint8_t ichCode) {
+  if (ch < 1 || ch > 16) return false;
+  if (ichCode > 63) ichCode = 63;
+  return mpq3326WriteReg(addr, mpqICHReg(ch), (uint8_t)(ichCode & 0x3F));
+}
+
+uint8_t mpq3326CurrentToICH(float mA) {
+  if (mA <= 0.0f) return 0;
+  if (mA >= ISET_mA) return 63;
+  float codeF = 63.0f * (mA / ISET_mA);
+  int code = (int)(codeF + 0.5f);
+  if (code < 0) code = 0;
+  if (code > 63) code = 63;
+  return (uint8_t)code;
+}
+
+bool mpq3326SetChannelCurrent_mA(uint8_t addr, uint8_t ch, float mA) {
+  if (ch < 1 || ch > 4) return false;
+  if (mA < 0.0f) mA = 0.0f;
+  if (mA > ISET_mA) mA = ISET_mA;
+
+  uint8_t ich = mpq3326CurrentToICH(mA);
+  if (!mpq3326SetPWM12(addr, ch, 4095)) return false;
+  if (!mpq3326SetICH(addr, ch, ich)) return false;
+  return true;
+}
+
+bool mpq3326OffChannels1to4(uint8_t addr) {
+  for (uint8_t ch = 1; ch <= 4; ch++) {
+    if (!mpq3326SetPWM12(addr, ch, 0)) return false;
+    if (!mpq3326SetICH(addr, ch, 0)) return false;
+  }
+  return true;
+}
+
+// ============================================================
+// Simple Serial CLI
+// ============================================================
+
+static char g_line[64];
+static uint8_t g_lineLen = 0;
+
+void printHelp() {
+  Serial.println(F("Commands:"));
+  Serial.println(F("  help"));
+  Serial.println(F("  set <ch> <mA>      (ch=1..4, mA=0..50) e.g. set 2 12.5"));
+  Serial.println(F("  off                (turn off channels 1..4)"));
+  Serial.println(F("  dump               (dump all registers)"));
+  Serial.println(F("  a0                 (read analog A0 once)"));
+  Serial.println(F("  a0 on              (stream A0 every 200 ms)"));
+  Serial.println(F("  a0 off             (stop streaming A0)"));
+  Serial.print(F("ISET full-scale (mA) = "));
+  Serial.println(ISET_mA, 3);
+}
+
+void handleLine(const char *line) {
+  char cmd[16] = {0};
+  char arg1[16] = {0};
+  int ch = 0;
+  float mA = 0.0f;
+
+  // Parse up to 2 string tokens; set parsing handled separately
+  int n2 = sscanf(line, "%15s %15s", cmd, arg1);
+
+  // Special: "set <ch> <mA>"
+  if (n2 >= 1 && strcmp(cmd, "set") == 0) {
+    int n = sscanf(line, "%15s %d %f", cmd, &ch, &mA);
+    if (n < 3) {
+      Serial.println(F("ERR: usage: set <ch> <mA>"));
+      return;
+    }
+    if (ch < 1 || ch > 4) {
+      Serial.println(F("ERR: channel must be 1..4"));
+      return;
+    }
+    if (mA < 0.0f || mA > 50.0f) {
+      Serial.println(F("ERR: mA must be 0..50"));
+      return;
+    }
+
+    if (!mpq3326SetChannelCurrent_mA(g_mpqAddr, (uint8_t)ch, mA)) {
+      Serial.println(F("ERR: set failed"));
+      return;
+    }
+
+    uint8_t ich = mpq3326CurrentToICH(mA);
+    Serial.print(F("OK: CH"));
+    Serial.print(ch);
+    Serial.print(F(" set to "));
+    Serial.print(mA, 3);
+    Serial.print(F(" mA (ICH="));
+    Serial.print(ich);
+    Serial.println(F(", PWM=4095)"));
+    return;
+  }
+
+  if (n2 >= 1) {
+    if (strcmp(cmd, "help") == 0) {
+      printHelp();
+      return;
+    }
+    if (strcmp(cmd, "dump") == 0) {
+      mpq3326DumpAllRegs(g_mpqAddr);
+      return;
+    }
+    if (strcmp(cmd, "off") == 0) {
+      if (!mpq3326OffChannels1to4(g_mpqAddr)) {
+        Serial.println(F("ERR: off failed"));
+      } else {
+        Serial.println(F("OK: channels 1-4 off"));
+      }
+      return;
+    }
+
+    // NEW: A0 read
+    if (strcmp(cmd, "a0") == 0) {
+      if (n2 == 1) {
+        printA0Once();
+        return;
+      }
+      if (n2 >= 2 && strcmp(arg1, "on") == 0) {
+        g_a0StreamEnable = true;
+        Serial.println(F("OK: A0 streaming ON"));
+        return;
+      }
+      if (n2 >= 2 && strcmp(arg1, "off") == 0) {
+        g_a0StreamEnable = false;
+        Serial.println(F("OK: A0 streaming OFF"));
+        return;
+      }
+      Serial.println(F("ERR: usage: a0 | a0 on | a0 off"));
+      return;
+    }
+  }
+
+  Serial.println(F("ERR: unknown command. Type 'help'."));
+}
+
+void cliPoll() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      g_line[g_lineLen] = '\0';
+      if (g_lineLen > 0) handleLine(g_line);
+      g_lineLen = 0;
+      return;
+    }
+
+    if (g_lineLen < (sizeof(g_line) - 1)) {
+      g_line[g_lineLen++] = c;
+    }
+  }
+}
+
+// ============================================================
+// Setup + Loop
+// ============================================================
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) { delay(10); }
+
+  // NEW: configure ADC resolution explicitly (Nano 33 supports analogReadResolution)
+  analogReadResolution(ADC_BITS);
+  pinMode(A0_PIN, INPUT);
+
+  Wire.begin();
+  Wire.setClock(400000);
+
+  Serial.println(F("MPQ3326 Modular Register Tool"));
+
+  // Find device
+  g_mpqAddr = (g_mpqAddr == 0) ? mpq3326AutodetectAddr() : g_mpqAddr;
+  if (g_mpqAddr == 0) {
+    Serial.println(F("ERROR: No MPQ3326 found at 0x30..0x39."));
+    return;
+  }
+
+  Serial.print(F("Found MPQ3326 at 0x"));
+  Serial.println(g_mpqAddr, HEX);
+
+  Serial.print(F("Computed ISET full-scale (mA) from RISET=10k: "));
+  Serial.println(ISET_mA, 3);
+
+  mpq3326DumpAllRegs(g_mpqAddr);    // INITIAL STATE READ
+
+  // WRITE 0x30 TO 0x01 (configure while EN(bit)=0)
+  if (!mpq3326WriteReg(g_mpqAddr, 0x01, 0x30)) {
+    Serial.println(F("ERROR: Failed writing 0x30 to reg 0x01"));
+    return;
+  }
+
+  // Optional read-back
+  uint8_t rb = 0;
+  if (mpq3326ReadReg(g_mpqAddr, 0x01, rb)) {
+    Serial.print(F("Reg 0x01 readback = 0x"));
+    if (rb < 0x10) Serial.print('0');
+    Serial.println(rb, HEX);
+  } else {
+    Serial.println(F("WARN: Failed readback of reg 0x01"));
+  }
+
+  // DISABLE CHANNELS 9 - 16
+  if (!mpq3326WriteReg(g_mpqAddr, 0x04, 0x00)) {
+    Serial.println(F("ERROR: Failed writing 0x00 to reg 0x04"));
+    return;
+  }
+
+  // ENABLE CHANNELS 1 - 4 AND DISABLE 5 - 8
+  if (!mpq3326WriteReg(g_mpqAddr, 0x05, 0x0F)) {
+    Serial.println(F("ERROR: Failed writing 0x0F to reg 0x05"));
+    return;
+  }
+
+  // SET ANALOG AND PWM VALUES TO 0 FOR CH1..CH4 (0x0A..0x15)
+  if (!mpq3326ZeroRegs_0A_to_15(g_mpqAddr)) {
+    Serial.println(F("ERROR: Failed zeroing regs 0x0A..0x15"));
+    return;
+  }
+
+  // ENABLE IC (EN(bit)=1) AFTER SAFE CONFIGURATION
+  if (!mpq3326WriteReg(g_mpqAddr, 0x01, 0x31)) {
+    Serial.println(F("ERROR: Failed writing 0x31 to reg 0x01"));
+    return;
+  }
+
+  mpq3326DumpAllRegs(g_mpqAddr);    // LAST STATE READ
+
+  Serial.println(F("Ready. Type 'help' for commands."));
+  printHelp();
+
+  // Optional: print an initial A0 reading at boot
+  Serial.println(F("Initial A0 reading:"));
+  printA0Once();
+}
+
+void loop() {
+  cliPoll();
+
+  // NEW: periodic A0 streaming if enabled
+  if (g_a0StreamEnable) {
+    uint32_t now = millis();
+    if ((now - g_a0LastMs) >= A0_STREAM_PERIOD_MS) {
+      g_a0LastMs = now;
+      printA0Once();
+    }
+  }
+}
