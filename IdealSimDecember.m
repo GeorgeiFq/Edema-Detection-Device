@@ -1,109 +1,65 @@
 %% ========================================================================
-% Idealized Reflectance Simulation vs mus'
-% - Pencil beam at gel surface
-% - Detector at 3 mm and 7 mm SDS
-% - 1450 and 1650 nm (mua from water mix)
-% - Larger (idealized) detector area for better stats
-% - Fixed base number of photons per run
+% MC_LUT_MultiGel.m
 %
-% FIXES INCLUDED:
-% (1) Print detected photon COUNTS (Ndet) in addition to fraction
-% (2) Compute binomial uncertainty sigma_p and store for error bars
-% (3) Flag low-count points (Ndet < Ndet_warn)
-% (4) Adaptive re-run for low-count cases to reach a target Ndet,
-%     with a hard cap on photons per run to prevent runaway runtimes
-% (5) Plot with error bars (percent collected ± 1σ)
+% Runs MCmatlab LUT sweeps for MULTIPLE gels (e.g., two water fractions)
+% in one unattended run, with optional checkpoint saving so you can resume
+% if the run is interrupted.
 %
-% LUT + SAVING:
-% (6) Build a LUT structure + flat table for all conditions
-% (7) Create output folder at a fixed path (your requested directory)
-% (8) Save figures (.png + .fig) and save LUT (.mat + .csv)
+% Based on your "Idealized Reflectance Simulation vs mus'" script, with:
+%  - Loop over gel water fractions (fw list)
+%  - User-specified mus' range (min/max/step)
+%  - Per-gel output subfolders (figures + LUT + progress checkpoint)
+%  - Optional resume: skips points already completed (doneMask)
+%  - Optional periodic progress saves (per mus' step by default)
 %
-% MODIFICATION (per your request):
-% - For 1450 nm at 7 mm SDS ONLY: run a single pass at 2e9 photons
-%   (no adaptive stepping / reruns). All other cases remain unchanged.
+% Keeps your forced one-pass rule:
+%  - 1450 nm at 7 mm SDS: single pass at 2e9 photons (no adaptive reruns)
 % ========================================================================
 
 clc; clear;
 MCmatlab.closeMCmatlabFigures();
 model = MCmatlab.model;
 
-%% ---------------- OUTPUT FOLDER (FIXED PATH) ----------------
-baseOutPath = 'C:\Users\georg\Documents\MATLAB\MCmatlab-Release\Paper Data';
+%% ===================== USER SETTINGS =====================
+% ----- Output -----
+baseOutPath   = 'C:\Users\georg\Documents\MATLAB\MCmatlab-Release\Paper Data';
 
-timestamp  = datestr(now,'yyyymmdd_HHMMSS');
-outFolder  = fullfile(baseOutPath, ['MC_LUT_' timestamp]);
+% Set a runID so you can RESUME later by reusing the same runID.
+% If empty, a timestamp-based folder is created (harder to resume).
+runID         = "MC_LUT_HIRES_GELPAIR";   % e.g., "MC_LUT_HIRES_GELPAIR" or ""
 
-figFolder  = fullfile(outFolder,'figures');
-lutFolder  = fullfile(outFolder,'lut');
+resumeIfExists = true;   % if true and progress files exist, load + continue
+saveEveryPoint = false;  % if true, checkpoint after EVERY point (slower)
+saveEveryMus   = true;   % if true, checkpoint after each mus' index (recommended)
 
-if ~exist(baseOutPath,'dir'); mkdir(baseOutPath); end
-if ~exist(outFolder,'dir');   mkdir(outFolder);   end
-if ~exist(figFolder,'dir');   mkdir(figFolder);   end
-if ~exist(lutFolder,'dir');   mkdir(lutFolder);   end
+% ----- Gels to run (you asked for two at once; vector supports any N) -----
+% These are treated as "water concentration" for mua = fw * ExtinctionWater.
+% Use your true fw values you want to simulate:
+gel_fw_list = [0.78, 0.8168];   % example: [0.78, 0.8168]
 
-fprintf('\n[INFO] Saving outputs to:\n  %s\n\n', outFolder);
+% ----- mus' range (cm^-1) -----
+% You asked for e.g. 0 to 10. NOTE: mus'=0 is not meaningful for transport;
+% we auto-bump 0 -> musPrimeEps to avoid divide-by-zero.
+musPrimeMin  = 0.0;
+musPrimeMax  = 10.0;
+musPrimeStep = 0.10;    % high resolution (change as desired)
+musPrimeEps  = 1e-4;    % used if min <= 0
 
-%% ---------------- GEOMETRY ----------------
-model.G.nx = 101;
-model.G.ny = 101;
-model.G.nz = 150;
-
-% Gel size (cm): 35 x 35 x 12 mm
-model.G.Lx = 3.5;
-model.G.Ly = 3.5;
-model.G.Lz = 1.2;
-
-model.G.mediaPropertiesFunc = @mediaPropertiesFunc;
-model.G.geomFunc            = @geometryDefinition;
-
-%% ---------------- ABSORPTION (FROM MIXTURE) ----------------
-ConcentrationWater    = 0.70;
-ExtinctionWater1450   = 28.8;  % [cm^-1]
-ExtinctionWater1650   = 5.7;   % [cm^-1]
-
-mua1450 = ConcentrationWater * ExtinctionWater1450;  % 23.04 cm^-1
-mua1650 = ConcentrationWater * ExtinctionWater1650;  % 4.56  cm^-1
-
-wavelengthList = [1450, 1650];
-muaList        = [mua1450, mua1650];
-wlLabels       = {'1450 nm','1650 nm'};
-
-%% ---------------- USER-DEFINED mus' VALUES ----------------
-g_tissue = 0.9;  % anisotropy (fixed)
-%musPrimeList = [0.01 0.02 0.04 0.08 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.5 0.75 1.0 1.2 1.4 1.7 1.85 2.0];
-musPrimeList_A = [ ...
-  0.005 0.007 0.009 0.011 0.013 ...
-  0.015 0.017 0.020 0.024 0.028 ...
-  0.032 0.038 0.045 0.055 0.065 ...
-  0.075 0.090 0.110 0.140 0.180 ...
-];
-
-musPrimeList_B = [ ...
-  0.220 0.260 0.300 0.340 0.380 ...
-  0.420 0.460 0.500 0.600 0.700 ...
-  0.800 0.900 1.000 1.100 1.200 ...
-  1.350 1.500 1.650 1.800 2.000 ...
-];
-
-nMus         = length(musPrimeList);
-
-%% ---------------- SDS LIST ----------------
+% ----- SDS list (cm) -----
 SDSlist_cm  = [0.3, 0.7];      % 3 mm and 7 mm
 SDSlabels   = {'3 mm','7 mm'};
 
-%% ---------------- STORAGE: FRACTIONS + COUNTS + UNCERTAINTY ----------------
-% dims: (nMus x nSDS x nWavelength)
-nSDS = numel(SDSlist_cm);
-nW   = numel(wavelengthList);
+% ----- Wavelength + absorption model -----
+wavelengthList = [1450, 1650];
+wlLabels       = {'1450 nm','1650 nm'};
 
-fracCollected  = zeros(nMus, nSDS, nW);
-sigmaFrac      = zeros(nMus, nSDS, nW);   % 1-sigma uncertainty on fraction
-NdetCollected  = zeros(nMus, nSDS, nW);   % detected photons
-Nlaunched      = zeros(nMus, nSDS, nW);   % actual simulated photons (final run)
-Nrequested     = zeros(nMus, nSDS, nW);   % requested photons (final run)
+ExtinctionWater1450 = 28.8;  % [cm^-1]
+ExtinctionWater1650 = 5.7;   % [cm^-1]
 
-%% ---------------- BASE MONTE CARLO SETTINGS ----------------
+% ----- Scattering anisotropy -----
+g_tissue = 0.9;  % fixed
+
+% ----- Monte Carlo settings -----
 model.MC.matchedInterfaces       = true;
 model.MC.boundaryType            = 1;
 
@@ -117,7 +73,7 @@ model.MC.lightSource.phi    = 0;
 
 model.MC.useLightCollector = true;
 
-% --------- COLLECTOR: working style, just larger ---------
+% Collector (your working style, larger for better stats)
 model.MC.lightCollector.f         = 0.1;   % finite focal length
 model.MC.lightCollector.diam      = 0.5;   % [cm] 5 mm diameter
 model.MC.lightCollector.fieldSize = 0.5;   % [cm] imaged field diameter
@@ -128,229 +84,350 @@ model.MC.lightCollector.res       = 50;
 model.MC.lightCollector.theta     = 0;
 model.MC.lightCollector.phi       = pi/2;
 
-%% ---------------- PHOTON BUDGET / ADAPTIVE SETTINGS ----------------
+% ----- Photon budget / adaptive settings -----
 N_base      = 2e7;      % baseline photons per run
-N_cap       = 2e9;      % hard cap (used by adaptive runs)
+N_cap       = 2e9;      % hard cap (adaptive runs)
 Ndet_target = 1000;     % target detected photons (adaptive runs)
 Ndet_warn   = 500;      % warn below this
 maxReruns   = 5;
 scaleMax    = 20;
 
-% --- Forced one-pass setting for 1450 nm @ 7 mm ---
+% Forced one-pass setting for 1450 nm @ 7 mm
 N_force_1450_7mm = 2e9;
 
-%% ========================================================================
-% MAIN LOOP OVER mus'
-% ========================================================================
-for m = 1:nMus
-    musPrime = musPrimeList(m);                 % μs' [cm^-1]
-    mus      = musPrime / (1 - g_tissue);       % convert to μs for MCmatlab
-    fprintf('\n================ mus'' = %.3g cm^-1 ================\n', musPrime);
+%% ===================== BUILD mus' LIST =====================
+musPrimeList = musPrimeMin:musPrimeStep:musPrimeMax;
+if isempty(musPrimeList)
+    error('musPrimeList is empty. Check musPrimeMin/musPrimeMax/musPrimeStep.');
+end
+if musPrimeList(1) <= 0
+    musPrimeList(1) = musPrimeEps;
+    fprintf('[WARN] musPrimeMin <= 0. Using musPrimeList(1)=%.3g cm^-1 to avoid divide-by-zero.\n', musPrimeEps);
+end
+nMus = numel(musPrimeList);
 
-    for sdsIdx = 1:nSDS
-        sds_cm   = SDSlist_cm(sdsIdx);
-        SDSlabel = SDSlabels{sdsIdx};
+%% ===================== MASTER OUTPUT FOLDER =====================
+if strlength(runID) == 0
+    timestamp = datestr(now,'yyyymmdd_HHMMSS');
+    outFolder = fullfile(baseOutPath, ['MC_LUT_' timestamp]);
+else
+    outFolder = fullfile(baseOutPath, char(runID));
+end
 
-        % Set detector position for this SDS
-        model.MC.lightCollector.x = 0;
-        model.MC.lightCollector.y = -sds_cm;
-        model.MC.lightCollector.z = 0;   % at top boundary
+if ~exist(baseOutPath,'dir'); mkdir(baseOutPath); end
+if ~exist(outFolder,'dir');   mkdir(outFolder);   end
 
-        for w = 1:nW
-            wl    = wavelengthList(w);
-            mua   = muaList(w);
-            label = wlLabels{w};
+fprintf('\n[INFO] Saving outputs to:\n  %s\n', outFolder);
 
-            fprintf('Running %s @ SDS %s, mus'' = %.3g ...\n', ...
-                label, SDSlabel, musPrime);
+% Optional: log all console output to a diary file
+diaryFile = fullfile(outFolder, 'run_log.txt');
+diary(diaryFile);
+diary on;
 
-            % Set wavelength + medium properties
-            model.MC.wavelength = wl;
-            model.G.mediaPropParams = {mus, mua};
+%% ===================== GEOMETRY SETUP =====================
+model.G.nx = 101;
+model.G.ny = 101;
+model.G.nz = 150;
 
-            % Identify special case: 1450 nm AND 7 mm SDS
-            is1450 = (wl == 1450);
-            is7mm  = (abs(sds_cm - 0.7) < 1e-12);
-            isForcedCase = is1450 && is7mm;
+% Gel size (cm): 35 x 35 x 12 mm
+model.G.Lx = 3.5;
+model.G.Ly = 3.5;
+model.G.Lz = 1.2;
 
-            if isForcedCase
-                % ---- ONE PASS at 2e9, no adaptive reruns ----
-                model.MC.nPhotonsRequested = N_force_1450_7mm;
-                modelOut = runMonteCarlo(model);
+model.G.mediaPropertiesFunc = @mediaPropertiesFunc;
+model.G.geomFunc            = @geometryDefinition;
 
-                Ndet      = modelOut.MC.nPhotonsCollected;
-                NreqFinal = modelOut.MC.nPhotonsRequested;
+%% ===================== RUN MULTI-GEL LOOP =====================
+nSDS = numel(SDSlist_cm);
+nW   = numel(wavelengthList);
 
-                fprintf('  [FORCED] 1450 nm @ 7 mm: single pass at %.2e photons\n', N_force_1450_7mm);
-            else
-                % ---- Normal adaptive behavior for all other cases ----
-                model.MC.nPhotonsRequested = N_base;
-                [modelOut, Ndet, NreqFinal] = runWithTargetCounts(model, Ndet_target, N_cap, maxReruns, scaleMax);
+for gIdx = 1:numel(gel_fw_list)
+    fw = gel_fw_list(gIdx);
+
+    % Derive mua per wavelength
+    mua1450 = fw * ExtinctionWater1450;
+    mua1650 = fw * ExtinctionWater1650;
+    muaList = [mua1450, mua1650];
+
+    % Per-gel folders
+    gelTag     = sprintf('gel_fw_%0.4f', fw);
+    gelTag     = strrep(gelTag,'.','p');   % safer folder naming
+    gelFolder  = fullfile(outFolder, gelTag);
+
+    figFolder  = fullfile(gelFolder,'figures');
+    lutFolder  = fullfile(gelFolder,'lut');
+
+    if ~exist(gelFolder,'dir'); mkdir(gelFolder); end
+    if ~exist(figFolder,'dir'); mkdir(figFolder); end
+    if ~exist(lutFolder,'dir'); mkdir(lutFolder); end
+
+    fprintf('\n============================================================\n');
+    fprintf('[GEL] Starting gel fw = %.4f   (mua1450=%.3f, mua1650=%.3f cm^-1)\n', fw, mua1450, mua1650);
+    fprintf('      Output: %s\n', gelFolder);
+    fprintf('============================================================\n');
+
+    % Progress file (checkpoint)
+    progressFile = fullfile(lutFolder, 'progress_checkpoint.mat');
+
+    % Allocate / resume arrays
+    if resumeIfExists && exist(progressFile,'file')
+        S = load(progressFile);
+        state = S.state;
+
+        % Basic compatibility checks (avoid silent mismatch)
+        assert(numel(state.axes.musPrime_cm1)==nMus, 'Resume mismatch: musPrimeList length differs.');
+        assert(numel(state.axes.SDS_cm)==nSDS,        'Resume mismatch: SDS list differs.');
+        assert(numel(state.axes.wavelength_nm)==nW,   'Resume mismatch: wavelength list differs.');
+
+        fracCollected = state.data.fracCollected;
+        sigmaFrac     = state.data.sigmaFrac;
+        NdetCollected = state.data.Ndet;
+        Nlaunched     = state.data.Nsimulated;
+        Nrequested    = state.data.Nrequested;
+        doneMask      = state.data.doneMask;
+
+        fprintf('[INFO] Resuming from checkpoint: %s\n', progressFile);
+        fprintf('[INFO] Completed points: %d / %d\n', nnz(doneMask), numel(doneMask));
+    else
+        fracCollected  = zeros(nMus, nSDS, nW);
+        sigmaFrac      = zeros(nMus, nSDS, nW);
+        NdetCollected  = zeros(nMus, nSDS, nW);
+        Nlaunched      = zeros(nMus, nSDS, nW);
+        Nrequested     = zeros(nMus, nSDS, nW);
+        doneMask       = false(nMus, nSDS, nW);
+    end
+
+    %% ===================== MAIN LOOP OVER mus' =====================
+    for m = 1:nMus
+        musPrime = musPrimeList(m);                 % μs' [cm^-1]
+        mus      = musPrime / (1 - g_tissue);       % convert to μs for MCmatlab
+
+        fprintf('\n================ mus'' = %.4g cm^-1 (gel fw=%.4f) ================\n', musPrime, fw);
+
+        for sdsIdx = 1:nSDS
+            sds_cm   = SDSlist_cm(sdsIdx);
+            SDSlabel = SDSlabels{sdsIdx};
+
+            % Set detector position for this SDS
+            model.MC.lightCollector.x = 0;
+            model.MC.lightCollector.y = -sds_cm;
+            model.MC.lightCollector.z = 0;   % at top boundary
+
+            for w = 1:nW
+                if doneMask(m, sdsIdx, w)
+                    fprintf('Skipping (already done): %s @ SDS %s, mus''=%.4g\n', wlLabels{w}, SDSlabel, musPrime);
+                    continue;
+                end
+
+                wl    = wavelengthList(w);
+                mua   = muaList(w);
+                label = wlLabels{w};
+
+                fprintf('Running %s @ SDS %s, mus''=%.4g, gel fw=%.4f ...\n', label, SDSlabel, musPrime, fw);
+
+                % Set wavelength + medium properties
+                model.MC.wavelength = wl;
+                model.G.mediaPropParams = {mus, mua};
+
+                % Identify special case: 1450 nm AND 7 mm SDS
+                is1450 = (wl == 1450);
+                is7mm  = (abs(sds_cm - 0.7) < 1e-12);
+                isForcedCase = is1450 && is7mm;
+
+                if isForcedCase
+                    % ---- ONE PASS at 2e9, no adaptive reruns ----
+                    model.MC.nPhotonsRequested = N_force_1450_7mm;
+                    modelOut = runMonteCarlo(model);
+
+                    Ndet      = modelOut.MC.nPhotonsCollected;
+                    NreqFinal = modelOut.MC.nPhotonsRequested;
+
+                    fprintf('  [FORCED] 1450 nm @ 7 mm: single pass at %.2e photons\n', N_force_1450_7mm);
+                else
+                    % ---- Normal adaptive behavior for all other cases ----
+                    model.MC.nPhotonsRequested = N_base;
+                    [modelOut, Ndet, NreqFinal] = runWithTargetCounts(model, Ndet_target, N_cap, maxReruns, scaleMax);
+                end
+
+                % Fraction and uncertainty (binomial)
+                Nsim = modelOut.MC.nPhotons;         % actual simulated photons
+                p    = Ndet / Nsim;
+                sigma_p = sqrt(max(p*(1-p)/Nsim, 0));
+
+                % Store
+                fracCollected(m, sdsIdx, w) = p;
+                sigmaFrac(m, sdsIdx, w)     = sigma_p;
+                NdetCollected(m, sdsIdx, w) = Ndet;
+                Nlaunched(m, sdsIdx, w)     = Nsim;
+                Nrequested(m, sdsIdx, w)    = NreqFinal;
+                doneMask(m, sdsIdx, w)      = true;
+
+                % Print
+                fprintf('  -> Ndet = %d out of Nsim = %d (requested %d)\n', Ndet, Nsim, NreqFinal);
+                fprintf('  -> Fraction = %.6g (%.6f %%), 1σ = %.3g (%.3g %%)\n', ...
+                        p, 100*p, sigma_p, 100*sigma_p);
+
+                if Ndet < Ndet_warn
+                    fprintf('  [WARN] Low-count point (Ndet < %d). Treat as noisy.\n', Ndet_warn);
+                end
+
+                % Real-time checkpoint (optional; slower)
+                if saveEveryPoint
+                    state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+                        fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
+                        model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
+                        N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
+
+                    save(progressFile, 'state', '-v7.3');
+                end
             end
+        end
 
-            % Fraction and uncertainty (binomial)
-            Nsim = modelOut.MC.nPhotons;         % actual simulated photons
-            p    = Ndet / Nsim;
-            sigma_p = sqrt(max(p*(1-p)/Nsim, 0));
+        % Periodic checkpoint (recommended): save after each mus'
+        if saveEveryMus
+            state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+                fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
+                model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
+                N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
 
-            % Store
-            fracCollected(m, sdsIdx, w) = p;
-            sigmaFrac(m, sdsIdx, w)     = sigma_p;
-            NdetCollected(m, sdsIdx, w) = Ndet;
-            Nlaunched(m, sdsIdx, w)     = Nsim;
-            Nrequested(m, sdsIdx, w)    = NreqFinal;
+            save(progressFile, 'state', '-v7.3');
+            fprintf('[INFO] Checkpoint saved: %s\n', progressFile);
+        end
+    end
 
-            % Print
-            fprintf('  -> Ndet = %d out of Nsim = %d (requested %d)\n', Ndet, Nsim, NreqFinal);
-            fprintf('  -> Fraction = %.6g (%.6f %%), 1σ = %.3g (%.3g %%)\n', ...
-                    p, 100*p, sigma_p, 100*sigma_p);
+    %% ===================== FINAL LUT BUILD + SAVE =====================
+    pct      = 100 * fracCollected;
+    pctSigma = 100 * sigmaFrac;
 
-            if Ndet < Ndet_warn
-                fprintf('  [WARN] Low-count point (Ndet < %d). Treat as noisy.\n', Ndet_warn);
+    % Flatten into table
+    nRows = nMus * nSDS * nW;
+    musPrime_col  = zeros(nRows,1);
+    SDSmm_col     = zeros(nRows,1);
+    wl_col        = zeros(nRows,1);
+    mua_col       = zeros(nRows,1);
+    frac_col      = zeros(nRows,1);
+    sigma_col     = zeros(nRows,1);
+    pct_col       = zeros(nRows,1);
+    pctSigma_col  = zeros(nRows,1);
+    Ndet_col      = zeros(nRows,1);
+    Nsim_col      = zeros(nRows,1);
+    Nreq_col      = zeros(nRows,1);
+
+    r = 0;
+    for im = 1:nMus
+        for is = 1:nSDS
+            for iw = 1:nW
+                r = r + 1;
+                musPrime_col(r) = musPrimeList(im);
+                SDSmm_col(r)    = 10 * SDSlist_cm(is);   % cm -> mm
+                wl_col(r)       = wavelengthList(iw);
+                mua_col(r)      = muaList(iw);
+                frac_col(r)     = fracCollected(im,is,iw);
+                sigma_col(r)    = sigmaFrac(im,is,iw);
+                pct_col(r)      = pct(im,is,iw);
+                pctSigma_col(r) = pctSigma(im,is,iw);
+                Ndet_col(r)     = NdetCollected(im,is,iw);
+                Nsim_col(r)     = Nlaunched(im,is,iw);
+                Nreq_col(r)     = Nrequested(im,is,iw);
             end
         end
     end
+
+    LUT_table = table( ...
+        musPrime_col, SDSmm_col, wl_col, mua_col, ...
+        frac_col, sigma_col, pct_col, pctSigma_col, ...
+        Ndet_col, Nsim_col, Nreq_col, ...
+        'VariableNames', {'musPrime_cm1','SDS_mm','wavelength_nm','mua_cm1', ...
+                          'fracCollected','sigmaFrac','pctCollected','pctSigma', ...
+                          'Ndet','Nsimulated','Nrequested'});
+
+    % Structured LUT
+    LUT = struct();
+    LUT.meta.fw                 = fw;
+    LUT.meta.outFolder          = gelFolder;
+    LUT.meta.geometry           = struct('Lx_cm',model.G.Lx,'Ly_cm',model.G.Ly,'Lz_cm',model.G.Lz, ...
+                                         'nx',model.G.nx,'ny',model.G.ny,'nz',model.G.nz);
+    LUT.meta.source             = struct('type','pencil','zFocus_cm',model.MC.lightSource.zFocus);
+    LUT.meta.collector          = struct('diam_cm',model.MC.lightCollector.diam,'fieldSize_cm',model.MC.lightCollector.fieldSize, ...
+                                         'NA',model.MC.lightCollector.NA,'res',model.MC.lightCollector.res);
+    LUT.meta.boundaryType       = model.MC.boundaryType;
+    LUT.meta.matchedInterfaces  = model.MC.matchedInterfaces;
+    LUT.meta.g_tissue           = g_tissue;
+    LUT.meta.ExtinctionWater1450= ExtinctionWater1450;
+    LUT.meta.ExtinctionWater1650= ExtinctionWater1650;
+    LUT.meta.N_base             = N_base;
+    LUT.meta.N_cap              = N_cap;
+    LUT.meta.Ndet_target        = Ndet_target;
+    LUT.meta.Ndet_warn          = Ndet_warn;
+    LUT.meta.maxReruns          = maxReruns;
+    LUT.meta.scaleMax           = scaleMax;
+    LUT.meta.N_force_1450_7mm   = N_force_1450_7mm;
+
+    LUT.axes.musPrime_cm1   = musPrimeList(:);
+    LUT.axes.SDS_cm         = SDSlist_cm(:);
+    LUT.axes.SDS_mm         = 10*SDSlist_cm(:);
+    LUT.axes.wavelength_nm  = wavelengthList(:);
+    LUT.axes.mua_cm1        = muaList(:);
+
+    LUT.data.fracCollected  = fracCollected;
+    LUT.data.sigmaFrac      = sigmaFrac;
+    LUT.data.pctCollected   = pct;
+    LUT.data.pctSigma       = pctSigma;
+    LUT.data.Ndet           = NdetCollected;
+    LUT.data.Nsimulated     = Nlaunched;
+    LUT.data.Nrequested     = Nrequested;
+    LUT.data.doneMask       = doneMask;
+
+    % Save LUT files
+    matFile = fullfile(lutFolder, 'LUT_MC_reflectance.mat');
+    csvFile = fullfile(lutFolder, 'LUT_MC_reflectance.csv');
+
+    save(matFile, 'LUT', 'LUT_table', '-v7.3');
+    writetable(LUT_table, csvFile);
+
+    fprintf('\n[INFO] Saved FINAL LUT for gel fw=%.4f:\n  %s\n  %s\n', fw, matFile, csvFile);
+
+    %% ===================== PLOTTING (per gel) =====================
+    % 1450 nm plot
+    f1 = figure('Color','w');
+    errorbar(musPrimeList, 100*fracCollected(:,1,1), 100*sigmaFrac(:,1,1), '-o', 'LineWidth', 2); hold on;
+    errorbar(musPrimeList, 100*fracCollected(:,2,1), 100*sigmaFrac(:,2,1), '-s', 'LineWidth', 2);
+    grid on;
+    xlabel('\mu_s'' [cm^{-1}]');
+    ylabel('Photons collected [%]');
+    title(sprintf('1450 nm: Collected photons vs \\mu_s'' (gel f_w=%.4f)', fw));
+    legend(sprintf('SDS = %s', SDSlabels{1}), sprintf('SDS = %s', SDSlabels{2}), 'Location', 'best');
+
+    saveas(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_fw_%s.png', gelTag)));
+    savefig(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_fw_%s.fig', gelTag)));
+
+    % 1650 nm plot
+    f2 = figure('Color','w');
+    errorbar(musPrimeList, 100*fracCollected(:,1,2), 100*sigmaFrac(:,1,2), '-o', 'LineWidth', 2); hold on;
+    errorbar(musPrimeList, 100*fracCollected(:,2,2), 100*sigmaFrac(:,2,2), '-s', 'LineWidth', 2);
+    grid on;
+    xlabel('\mu_s'' [cm^{-1}]');
+    ylabel('Photons collected [%]');
+    title(sprintf('1650 nm: Collected photons vs \\mu_s'' (gel f_w=%.4f)', fw));
+    legend(sprintf('SDS = %s', SDSlabels{1}), sprintf('SDS = %s', SDSlabels{2}), 'Location', 'best');
+
+    saveas(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_fw_%s.png', gelTag)));
+    savefig(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_fw_%s.fig', gelTag)));
+
+    fprintf('[INFO] Saved figures to:\n  %s\n', figFolder);
+
+    %% ===================== FINAL CHECKPOINT (done) =====================
+    state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+        fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
+        model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
+        N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
+
+    save(progressFile, 'state', '-v7.3');
+    fprintf('[INFO] Final checkpoint saved: %s\n', progressFile);
 end
 
-%% ========================================================================
-% BUILD LUT + SAVE TO DISK
-% ========================================================================
-pct      = 100 * fracCollected;
-pctSigma = 100 * sigmaFrac;
-
-% Flatten into a tidy LUT table:
-% Columns: musPrime, SDS_mm, wavelength_nm, mua_cm1, frac, fracSigma, pct, pctSigma, Ndet, Nsim, Nrequested
-nRows = nMus * nSDS * nW;
-musPrime_col  = zeros(nRows,1);
-SDSmm_col     = zeros(nRows,1);
-wl_col        = zeros(nRows,1);
-mua_col       = zeros(nRows,1);
-frac_col      = zeros(nRows,1);
-sigma_col     = zeros(nRows,1);
-pct_col       = zeros(nRows,1);
-pctSigma_col  = zeros(nRows,1);
-Ndet_col      = zeros(nRows,1);
-Nsim_col      = zeros(nRows,1);
-Nreq_col      = zeros(nRows,1);
-
-r = 0;
-for im = 1:nMus
-    for is = 1:nSDS
-        for iw = 1:nW
-            r = r + 1;
-            musPrime_col(r) = musPrimeList(im);
-            SDSmm_col(r)    = 10 * SDSlist_cm(is);   % cm -> mm
-            wl_col(r)       = wavelengthList(iw);
-            mua_col(r)      = muaList(iw);
-            frac_col(r)     = fracCollected(im,is,iw);
-            sigma_col(r)    = sigmaFrac(im,is,iw);
-            pct_col(r)      = pct(im,is,iw);
-            pctSigma_col(r) = pctSigma(im,is,iw);
-            Ndet_col(r)     = NdetCollected(im,is,iw);
-            Nsim_col(r)     = Nlaunched(im,is,iw);
-            Nreq_col(r)     = Nrequested(im,is,iw);
-        end
-    end
-end
-
-LUT_table = table( ...
-    musPrime_col, SDSmm_col, wl_col, mua_col, ...
-    frac_col, sigma_col, pct_col, pctSigma_col, ...
-    Ndet_col, Nsim_col, Nreq_col, ...
-    'VariableNames', {'musPrime_cm1','SDS_mm','wavelength_nm','mua_cm1', ...
-                      'fracCollected','sigmaFrac','pctCollected','pctSigma', ...
-                      'Ndet','Nsimulated','Nrequested'});
-
-% Structured LUT (MATLAB-friendly)
-LUT = struct();
-LUT.meta.timestamp          = timestamp;
-LUT.meta.outFolder          = outFolder;
-LUT.meta.geometry           = struct('Lx_cm',model.G.Lx,'Ly_cm',model.G.Ly,'Lz_cm',model.G.Lz, ...
-                                     'nx',model.G.nx,'ny',model.G.ny,'nz',model.G.nz);
-LUT.meta.source             = struct('type','pencil','zFocus_cm',model.MC.lightSource.zFocus);
-LUT.meta.collector          = struct('diam_cm',model.MC.lightCollector.diam,'fieldSize_cm',model.MC.lightCollector.fieldSize, ...
-                                     'NA',model.MC.lightCollector.NA,'res',model.MC.lightCollector.res);
-LUT.meta.boundaryType       = model.MC.boundaryType;
-LUT.meta.matchedInterfaces  = model.MC.matchedInterfaces;
-LUT.meta.g_tissue           = g_tissue;
-LUT.meta.ConcentrationWater = ConcentrationWater;
-LUT.meta.N_base             = N_base;
-LUT.meta.N_cap              = N_cap;
-LUT.meta.Ndet_target        = Ndet_target;
-LUT.meta.Ndet_warn          = Ndet_warn;
-LUT.meta.maxReruns          = maxReruns;
-LUT.meta.scaleMax           = scaleMax;
-LUT.meta.N_force_1450_7mm   = N_force_1450_7mm;
-
-LUT.axes.musPrime_cm1   = musPrimeList(:);
-LUT.axes.SDS_cm         = SDSlist_cm(:);
-LUT.axes.SDS_mm         = 10*SDSlist_cm(:);
-LUT.axes.wavelength_nm  = wavelengthList(:);
-LUT.axes.mua_cm1        = muaList(:);
-
-LUT.data.fracCollected  = fracCollected;
-LUT.data.sigmaFrac      = sigmaFrac;
-LUT.data.pctCollected   = pct;
-LUT.data.pctSigma       = pctSigma;
-LUT.data.Ndet           = NdetCollected;
-LUT.data.Nsimulated     = Nlaunched;
-LUT.data.Nrequested     = Nrequested;
-
-% Save LUT files
-matFile = fullfile(lutFolder, 'LUT_MC_reflectance.mat');
-csvFile = fullfile(lutFolder, 'LUT_MC_reflectance.csv');
-
-save(matFile, 'LUT', 'LUT_table');
-writetable(LUT_table, csvFile);
-
-fprintf('\n[INFO] Saved LUT:\n  %s\n  %s\n', matFile, csvFile);
-
-%% ========================================================================
-% PLOTTING WITH ERROR BARS + SAVE FIGURES
-% ========================================================================
-% ----- 1450 nm -----
-f1 = figure('Color','w');
-errorbar(musPrimeList, pct(:,1,1), pctSigma(:,1,1), '-o', 'LineWidth', 2); hold on;
-errorbar(musPrimeList, pct(:,2,1), pctSigma(:,2,1), '-s', 'LineWidth', 2);
-grid on;
-xlabel('\mu_s'' [cm^{-1}]');
-ylabel('Photons collected [%]');
-title('1450 nm: Collected photons vs \mu_s'' (±1\sigma)');
-legend('SDS = 3 mm', 'SDS = 7 mm', 'Location', 'best');
-
-saveas(f1, fullfile(figFolder,'Collected_vs_musPrime_1450nm.png'));
-savefig(f1, fullfile(figFolder,'Collected_vs_musPrime_1450nm.fig'));
-
-% ----- 1650 nm -----
-f2 = figure('Color','w');
-errorbar(musPrimeList, pct(:,1,2), pctSigma(:,1,2), '-o', 'LineWidth', 2); hold on;
-errorbar(musPrimeList, pct(:,2,2), pctSigma(:,2,2), '-s', 'LineWidth', 2);
-grid on;
-xlabel('\mu_s'' [cm^{-1}]');
-ylabel('Photons collected [%]');
-title('1650 nm: Collected photons vs \mu_s'' (±1\sigma)');
-legend('SDS = 3 mm', 'SDS = 7 mm', 'Location', 'best');
-
-saveas(f2, fullfile(figFolder,'Collected_vs_musPrime_1650nm.png'));
-savefig(f2, fullfile(figFolder,'Collected_vs_musPrime_1650nm.fig'));
-
-fprintf('[INFO] Saved figures to:\n  %s\n', figFolder);
-
-%% ========================================================================
-% OPTIONAL: QUICK TABLE PRINT
-% ========================================================================
-fprintf('\n\n================ SUMMARY TABLE (percent ± 1σ, and Ndet) ================\n');
-for iw = 1:nW
-    fprintf('\n--- %s ---\n', wlLabels{iw});
-    for is = 1:nSDS
-        fprintf('SDS = %s:\n', SDSlabels{is});
-        for im = 1:nMus
-            fprintf('  mus''=%5.1f: %8.4f ± %8.4f %%   (Ndet=%d, Nsim=%d)\n', ...
-                musPrimeList(im), pct(im,is,iw), pctSigma(im,is,iw), ...
-                NdetCollected(im,is,iw), Nlaunched(im,is,iw));
-        end
-    end
-end
+fprintf('\n[INFO] All gel runs complete. Master output:\n  %s\n', outFolder);
+diary off;
 
 %% ========================================================================
 % GEOMETRY FUNCTION
@@ -430,4 +507,48 @@ function [modelOut, Ndet, NrequestedFinal] = runWithTargetCounts(modelIn, NdetTa
             break;
         end
     end
+end
+
+%% ========================================================================
+% Build checkpoint state struct (kept simple, used for resume + provenance)
+% ========================================================================
+function state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+    fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
+    model, g_tissue, Ext1450, Ext1650, N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder)
+
+    state = struct();
+
+    state.meta.fw                  = fw;
+    state.meta.outFolder           = outFolder;
+    state.meta.timestamp           = datestr(now,'yyyymmdd_HHMMSS');
+    state.meta.g_tissue            = g_tissue;
+    state.meta.ExtinctionWater1450 = Ext1450;
+    state.meta.ExtinctionWater1650 = Ext1650;
+
+    state.meta.N_base              = N_base;
+    state.meta.N_cap               = N_cap;
+    state.meta.Ndet_target         = Ndet_target;
+    state.meta.Ndet_warn           = Ndet_warn;
+    state.meta.maxReruns           = maxReruns;
+    state.meta.scaleMax            = scaleMax;
+    state.meta.N_force_1450_7mm    = N_force_1450_7mm;
+
+    state.meta.geometry = struct('Lx_cm',model.G.Lx,'Ly_cm',model.G.Ly,'Lz_cm',model.G.Lz, ...
+                                 'nx',model.G.nx,'ny',model.G.ny,'nz',model.G.nz);
+    state.meta.source   = struct('type','pencil','zFocus_cm',model.MC.lightSource.zFocus);
+    state.meta.collector= struct('diam_cm',model.MC.lightCollector.diam, ...
+                                 'fieldSize_cm',model.MC.lightCollector.fieldSize, ...
+                                 'NA',model.MC.lightCollector.NA,'res',model.MC.lightCollector.res);
+
+    state.axes.musPrime_cm1    = musPrimeList(:);
+    state.axes.SDS_cm          = SDSlist_cm(:);
+    state.axes.wavelength_nm   = wavelengthList(:);
+    state.axes.mua_cm1         = muaList(:);
+
+    state.data.fracCollected   = fracCollected;
+    state.data.sigmaFrac       = sigmaFrac;
+    state.data.Ndet            = NdetCollected;
+    state.data.Nsimulated      = Nlaunched;
+    state.data.Nrequested      = Nrequested;
+    state.data.doneMask        = doneMask;
 end
