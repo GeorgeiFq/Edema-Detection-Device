@@ -1,16 +1,14 @@
 %% ========================================================================
 % MC_LUT_MultiGel.m
 %
-% Runs MCmatlab LUT sweeps for MULTIPLE gels (e.g., two water fractions)
-% in one unattended run, with optional checkpoint saving so you can resume
-% if the run is interrupted.
+% Runs MCmatlab LUT sweeps for MULTIPLE "gels" (here: EXACTLY TWO absorption
+% conditions) in one unattended run, with optional checkpoint saving so you
+% can resume if the run is interrupted.
 %
-% Based on your "Idealized Reflectance Simulation vs mus'" script, with:
-%  - Loop over gel water fractions (fw list)
-%  - User-specified mus' range (min/max/step)
-%  - Per-gel output subfolders (figures + LUT + progress checkpoint)
-%  - Optional resume: skips points already completed (doneMask)
-%  - Optional periodic progress saves (per mus' step by default)
+% This version is modified to:
+%  - Run 2 gel absorption conditions total (specified via mua at 1450/1650)
+%  - Reduce scattering sweep from 0–10 to 0–5 (mu_s')
+%  - Double resolution vs prior (0.10 -> 0.05 step)
 %
 % Keeps your forced one-pass rule:
 %  - 1450 nm at 7 mm SDS: single pass at 2e9 photons (no adaptive reruns)
@@ -26,35 +24,45 @@ baseOutPath   = 'C:\Users\georg\Documents\MATLAB\MCmatlab-Release\Paper Data';
 
 % Set a runID so you can RESUME later by reusing the same runID.
 % If empty, a timestamp-based folder is created (harder to resume).
-runID         = "MC_LUT_HIRES_GELPAIR";   % e.g., "MC_LUT_HIRES_GELPAIR" or ""
+runID         = "MC_LUT_HIRES_2GELS_MUA";   % e.g., "MC_LUT_HIRES_2GELS_MUA" or ""
 
 resumeIfExists = true;   % if true and progress files exist, load + continue
 saveEveryPoint = false;  % if true, checkpoint after EVERY point (slower)
 saveEveryMus   = true;   % if true, checkpoint after each mus' index (recommended)
 
-% ----- Gels to run (you asked for two at once; vector supports any N) -----
-% These are treated as "water concentration" for mua = fw * ExtinctionWater.
-% Use your true fw values you want to simulate:
-gel_fw_list = [0.78, 0.8168];   % example: [0.78, 0.8168]
+% ----- Wavelength list -----
+wavelengthList = [1450, 1650];
+wlLabels       = {'1450 nm','1650 nm'};
 
-% ----- mus' range (cm^-1) -----
-% You asked for e.g. 0 to 10. NOTE: mus'=0 is not meaningful for transport;
-% we auto-bump 0 -> musPrimeEps to avoid divide-by-zero.
+% ----- Absorption model constants (used only if you want to derive mua from fw) -----
+ExtinctionWater1450 = 28.8;  % [cm^-1]
+ExtinctionWater1650 = 5.7;   % [cm^-1]
+
+% ----- Gels to run: EXACTLY TWO absorption conditions total -----
+% Specify per-gel absorption as: [mua1450, mua1650] in cm^-1
+% Option A (DIRECT mua specification):
+% gel_mua_list = [
+%     22.464, 4.446;   % example gel #1
+%     23.520, 4.656    % example gel #2
+% ];
+%
+% Option B (DERIVE mua from two water fractions fw using the extinction constants):
+fw1 = 0.78;
+fw2 = 0.8168;
+gel_mua_list = [
+    fw1 * ExtinctionWater1450,  fw1 * ExtinctionWater1650;
+    fw2 * ExtinctionWater1450,  fw2 * ExtinctionWater1650
+];
+
+% ----- mus' range (cm^-1): 0 to 5, with 2x resolution vs prior (0.05 step) -----
 musPrimeMin  = 0.0;
-musPrimeMax  = 10.0;
-musPrimeStep = 0.10;    % high resolution (change as desired)
+musPrimeMax  = 5.0;
+musPrimeStep = 0.05;    % doubled resolution vs 0.10
 musPrimeEps  = 1e-4;    % used if min <= 0
 
 % ----- SDS list (cm) -----
 SDSlist_cm  = [0.3, 0.7];      % 3 mm and 7 mm
 SDSlabels   = {'3 mm','7 mm'};
-
-% ----- Wavelength + absorption model -----
-wavelengthList = [1450, 1650];
-wlLabels       = {'1450 nm','1650 nm'};
-
-ExtinctionWater1450 = 28.8;  % [cm^-1]
-ExtinctionWater1650 = 5.7;   % [cm^-1]
 
 % ----- Scattering anisotropy -----
 g_tissue = 0.9;  % fixed
@@ -73,7 +81,7 @@ model.MC.lightSource.phi    = 0;
 
 model.MC.useLightCollector = true;
 
-% Collector (your working style, larger for better stats)
+% Collector (larger for better stats)
 model.MC.lightCollector.f         = 0.1;   % finite focal length
 model.MC.lightCollector.diam      = 0.5;   % [cm] 5 mm diameter
 model.MC.lightCollector.fieldSize = 0.5;   % [cm] imaged field diameter
@@ -141,17 +149,20 @@ model.G.geomFunc            = @geometryDefinition;
 nSDS = numel(SDSlist_cm);
 nW   = numel(wavelengthList);
 
-for gIdx = 1:numel(gel_fw_list)
-    fw = gel_fw_list(gIdx);
+% Enforce exactly 2 gels (as requested)
+if size(gel_mua_list,1) ~= 2 || size(gel_mua_list,2) ~= 2
+    error('gel_mua_list must be size 2x2: [mua1450 mua1650; mua1450 mua1650]');
+end
 
-    % Derive mua per wavelength
-    mua1450 = fw * ExtinctionWater1450;
-    mua1650 = fw * ExtinctionWater1650;
-    muaList = [mua1450, mua1650];
+for gIdx = 1:size(gel_mua_list,1)
+
+    muaList = gel_mua_list(gIdx,:);     % [mua1450, mua1650]
+    mua1450 = muaList(1);
+    mua1650 = muaList(2);
 
     % Per-gel folders
-    gelTag     = sprintf('gel_fw_%0.4f', fw);
-    gelTag     = strrep(gelTag,'.','p');   % safer folder naming
+    gelTag = sprintf('gel_mua1450_%0.3f_mua1650_%0.3f', mua1450, mua1650);
+    gelTag = strrep(gelTag,'.','p');   % safer folder naming
     gelFolder  = fullfile(outFolder, gelTag);
 
     figFolder  = fullfile(gelFolder,'figures');
@@ -162,7 +173,7 @@ for gIdx = 1:numel(gel_fw_list)
     if ~exist(lutFolder,'dir'); mkdir(lutFolder); end
 
     fprintf('\n============================================================\n');
-    fprintf('[GEL] Starting gel fw = %.4f   (mua1450=%.3f, mua1650=%.3f cm^-1)\n', fw, mua1450, mua1650);
+    fprintf('[GEL] Starting gel #%d   (mua1450=%.3f, mua1650=%.3f cm^-1)\n', gIdx, mua1450, mua1650);
     fprintf('      Output: %s\n', gelFolder);
     fprintf('============================================================\n');
 
@@ -202,7 +213,7 @@ for gIdx = 1:numel(gel_fw_list)
         musPrime = musPrimeList(m);                 % μs' [cm^-1]
         mus      = musPrime / (1 - g_tissue);       % convert to μs for MCmatlab
 
-        fprintf('\n================ mus'' = %.4g cm^-1 (gel fw=%.4f) ================\n', musPrime, fw);
+        fprintf('\n================ mus'' = %.4g cm^-1 (gel #%d) ================\n', musPrime, gIdx);
 
         for sdsIdx = 1:nSDS
             sds_cm   = SDSlist_cm(sdsIdx);
@@ -223,7 +234,7 @@ for gIdx = 1:numel(gel_fw_list)
                 mua   = muaList(w);
                 label = wlLabels{w};
 
-                fprintf('Running %s @ SDS %s, mus''=%.4g, gel fw=%.4f ...\n', label, SDSlabel, musPrime, fw);
+                fprintf('Running %s @ SDS %s, mus''=%.4g, gel #%d ...\n', label, SDSlabel, musPrime, gIdx);
 
                 % Set wavelength + medium properties
                 model.MC.wavelength = wl;
@@ -273,7 +284,7 @@ for gIdx = 1:numel(gel_fw_list)
 
                 % Real-time checkpoint (optional; slower)
                 if saveEveryPoint
-                    state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+                    state = buildStateStruct(gIdx, mua1450, mua1650, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
                         fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
                         model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
                         N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
@@ -285,7 +296,7 @@ for gIdx = 1:numel(gel_fw_list)
 
         % Periodic checkpoint (recommended): save after each mus'
         if saveEveryMus
-            state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+            state = buildStateStruct(gIdx, mua1450, mua1650, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
                 fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
                 model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
                 N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
@@ -343,7 +354,9 @@ for gIdx = 1:numel(gel_fw_list)
 
     % Structured LUT
     LUT = struct();
-    LUT.meta.fw                 = fw;
+    LUT.meta.gelIndex           = gIdx;
+    LUT.meta.mua1450_cm1        = mua1450;
+    LUT.meta.mua1650_cm1        = mua1650;
     LUT.meta.outFolder          = gelFolder;
     LUT.meta.geometry           = struct('Lx_cm',model.G.Lx,'Ly_cm',model.G.Ly,'Lz_cm',model.G.Lz, ...
                                          'nx',model.G.nx,'ny',model.G.ny,'nz',model.G.nz);
@@ -385,7 +398,8 @@ for gIdx = 1:numel(gel_fw_list)
     save(matFile, 'LUT', 'LUT_table', '-v7.3');
     writetable(LUT_table, csvFile);
 
-    fprintf('\n[INFO] Saved FINAL LUT for gel fw=%.4f:\n  %s\n  %s\n', fw, matFile, csvFile);
+    fprintf('\n[INFO] Saved FINAL LUT for gel #%d (mua1450=%.3f, mua1650=%.3f cm^-1):\n  %s\n  %s\n', ...
+        gIdx, mua1450, mua1650, matFile, csvFile);
 
     %% ===================== PLOTTING (per gel) =====================
     % 1450 nm plot
@@ -395,11 +409,11 @@ for gIdx = 1:numel(gel_fw_list)
     grid on;
     xlabel('\mu_s'' [cm^{-1}]');
     ylabel('Photons collected [%]');
-    title(sprintf('1450 nm: Collected photons vs \\mu_s'' (gel f_w=%.4f)', fw));
+    title(sprintf('1450 nm: Collected photons vs \\mu_s'' (mua1450=%.3f, mua1650=%.3f cm^{-1})', mua1450, mua1650));
     legend(sprintf('SDS = %s', SDSlabels{1}), sprintf('SDS = %s', SDSlabels{2}), 'Location', 'best');
 
-    saveas(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_fw_%s.png', gelTag)));
-    savefig(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_fw_%s.fig', gelTag)));
+    saveas(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_%s.png', gelTag)));
+    savefig(f1, fullfile(figFolder, sprintf('Collected_vs_musPrime_1450nm_%s.fig', gelTag)));
 
     % 1650 nm plot
     f2 = figure('Color','w');
@@ -408,16 +422,16 @@ for gIdx = 1:numel(gel_fw_list)
     grid on;
     xlabel('\mu_s'' [cm^{-1}]');
     ylabel('Photons collected [%]');
-    title(sprintf('1650 nm: Collected photons vs \\mu_s'' (gel f_w=%.4f)', fw));
+    title(sprintf('1650 nm: Collected photons vs \\mu_s'' (mua1450=%.3f, mua1650=%.3f cm^{-1})', mua1450, mua1650));
     legend(sprintf('SDS = %s', SDSlabels{1}), sprintf('SDS = %s', SDSlabels{2}), 'Location', 'best');
 
-    saveas(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_fw_%s.png', gelTag)));
-    savefig(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_fw_%s.fig', gelTag)));
+    saveas(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_%s.png', gelTag)));
+    savefig(f2, fullfile(figFolder, sprintf('Collected_vs_musPrime_1650nm_%s.fig', gelTag)));
 
     fprintf('[INFO] Saved figures to:\n  %s\n', figFolder);
 
     %% ===================== FINAL CHECKPOINT (done) =====================
-    state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+    state = buildStateStruct(gIdx, mua1450, mua1650, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
         fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
         model, g_tissue, ExtinctionWater1450, ExtinctionWater1650, ...
         N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder);
@@ -510,15 +524,17 @@ function [modelOut, Ndet, NrequestedFinal] = runWithTargetCounts(modelIn, NdetTa
 end
 
 %% ========================================================================
-% Build checkpoint state struct (kept simple, used for resume + provenance)
+% Build checkpoint state struct (used for resume + provenance)
 % ========================================================================
-function state = buildStateStruct(fw, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
+function state = buildStateStruct(gIdx, mua1450, mua1650, musPrimeList, SDSlist_cm, wavelengthList, muaList, ...
     fracCollected, sigmaFrac, NdetCollected, Nlaunched, Nrequested, doneMask, ...
     model, g_tissue, Ext1450, Ext1650, N_base, N_cap, Ndet_target, Ndet_warn, maxReruns, scaleMax, N_force_1450_7mm, outFolder)
 
     state = struct();
 
-    state.meta.fw                  = fw;
+    state.meta.gelIndex            = gIdx;
+    state.meta.mua1450_cm1         = mua1450;
+    state.meta.mua1650_cm1         = mua1650;
     state.meta.outFolder           = outFolder;
     state.meta.timestamp           = datestr(now,'yyyymmdd_HHMMSS');
     state.meta.g_tissue            = g_tissue;
