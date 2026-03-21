@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRS Analysis Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:        #0d0f12;
+    --panel:     #13171e;
+    --border:    #232830;
+    --border2:   #2e3540;
+    --accent:    #00d4ff;
+    --accent2:   #00ff99;
+    --warn:      #ff3333;
+    --text:      #dde4ed;
+    --text-dim:  #7e8fa8;
+    --text-head: #ffffff;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+    --srs-accent: #a78bfa;
+    --srs-green:  #34d399;
+    --srs-yellow: #fbbf24;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px);
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* ── Page tabs ── */
+  .page-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    padding: 0 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .page-tab {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 14px 20px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  .page-tab:hover { color: var(--text); }
+  .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .page-tab.srs-tab.active { color: var(--srs-accent); border-bottom-color: var(--srs-accent); }
+  .page-tab .tab-badge {
+    display: inline-block;
+    background: var(--srs-green);
+    color: #000;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+  }
+  .page-tab .tab-badge.stale { background: #4b5563; color: var(--text-dim); }
+
+  /* ── Page content ── */
+  .page { display: none; padding: 32px 24px 64px; }
+  .page.active { display: block; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+
+  /* ── Header ── */
+  header { margin-bottom: 36px; }
+  .logo { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.25em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+  .logo.srs { color: var(--srs-accent); }
+  h1 { font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--text-head); letter-spacing: -0.02em; }
+  h1 span.a { color: var(--accent); }
+  h1 span.s { color: var(--srs-accent); }
+  .subtitle { margin-top: 6px; color: var(--text-dim); font-size: 13px; font-weight: 300; }
+
+  /* ── Panels ── */
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 24px; margin-bottom: 20px; }
+  .panel-title { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
+  .panel-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .panel-title.srs { color: var(--srs-accent); }
+  .panel-title.srs::after { background: rgba(167,139,250,0.2); }
+
+  /* ── Drop zone ── */
+  #dropzone { border: 2px dashed var(--border2); border-radius: 6px; padding: 40px 24px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; position: relative; }
+  #dropzone:hover, #dropzone.over { border-color: var(--accent); background: rgba(0,212,255,0.04); }
+  #dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { font-size: 32px; margin-bottom: 12px; display: block; }
+  .drop-label { font-family: var(--mono); font-size: 13px; color: var(--text-dim); }
+  .drop-label strong { color: var(--accent); font-weight: 500; }
+  #file-name { margin-top: 10px; font-family: var(--mono); font-size: 12px; color: var(--accent2); min-height: 18px; }
+
+  /* ── Scalars ── */
+  .scalars-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 520px) { .scalars-grid { grid-template-columns: 1fr; } }
+  .scalar-field label { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; }
+  .scalar-field label span { color: var(--accent); margin-right: 4px; }
+  .scalar-field input { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 4px; color: var(--text-head); font-family: var(--mono); font-size: 14px; padding: 8px 12px; outline: none; transition: border-color 0.15s; }
+  .scalar-field input:focus { border-color: var(--accent); }
+  .scalar-field input::placeholder { color: var(--text-dim); }
+  .scalar-slider { width: 100%; margin-top: 7px; accent-color: var(--accent); cursor: pointer; height: 4px; display: block; }
+  .slider-max { width: 52px; background: var(--bg); border: 1px solid var(--border2); border-radius: 4px; color: var(--text-head); font-family: var(--mono); font-size: 12px; padding: 4px 6px; outline: none; text-align: center; transition: border-color 0.15s; }
+  .slider-max:focus { border-color: var(--accent); }
+
+  /* ── Run button ── */
+  #run-btn { display: block; width: 100%; margin-top: 4px; padding: 13px; background: var(--accent); color: #000; border: none; border-radius: 4px; font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+  #run-btn:hover { background: #33ddff; }
+  #run-btn:active { transform: scale(0.99); }
+  #run-btn:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+
+  /* ── Results tables ── */
+  #results { display: none; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
+  thead tr { border-bottom: 1px solid var(--border2); }
+  th { text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
+  th:not(:first-child) { text-align: right; }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  td:not(:first-child) { text-align: right; color: var(--text-head); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  .ch-name { color: var(--text-dim); }
+  .val-accent { color: var(--accent) !important; }
+  .val-green  { color: var(--accent2) !important; }
+  .val-warn   { color: var(--warn) !important; }
+  .results-block { margin-bottom: 28px; }
+  #tbl-ptfe th, #tbl-ptfe td { text-align: center !important; }
+  #tbl-ptfe td { font-size: 13px; padding: 12px 10px; }
+  #tbl-ptfe th { font-size: 12px; padding: 10px; font-weight: 700; color: #ffffff; letter-spacing: 0.05em; }
+  .ptfe-title { color: #ffffff !important; font-weight: 700 !important; }
+  .error-msg { font-family: var(--mono); font-size: 12px; color: #ff5555; background: rgba(255,85,85,0.08); border: 1px solid rgba(255,85,85,0.2); border-radius: 4px; padding: 10px 14px; margin-top: 10px; }
+  .lut-sel-btn { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; padding: 8px 18px; border-radius: 4px; border: 1px solid var(--border2); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  .lut-sel-btn:hover { border-color: var(--accent); color: var(--text); }
+  .lut-sel-btn.active { background: rgba(0,212,255,0.1); border-color: var(--accent); color: var(--accent); }
+
+  /* ── LUT page ── */
+  .lut-header { margin-bottom: 28px; }
+  .lut-tabs { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+  .lut-tab { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; padding: 8px 18px; border-radius: 4px; border: 1px solid var(--border2); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  .lut-tab:hover { border-color: var(--accent); color: var(--text); }
+  .lut-tab.active { background: rgba(0,212,255,0.1); border-color: var(--accent); color: var(--accent); }
+  .lut-panel { display: none; }
+  .lut-panel.active { display: block; }
+  .lut-meta { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-bottom: 16px; padding: 10px 14px; background: rgba(0,212,255,0.04); border: 1px solid var(--border); border-radius: 4px; }
+  .lut-meta span { color: var(--accent); }
+  .lut-table th:not(:first-child) { text-align: right; }
+  .lut-table td:not(:first-child) { text-align: right; }
+  .lut-sc { color: var(--accent) !important; font-weight: 500; }
+
+  /* ══════════════════════════════════════
+     SRS SOLVER PAGE STYLES
+     ══════════════════════════════════════ */
+
+  /* Live feed banner */
+  .live-feed-banner {
+    background: rgba(167,139,250,0.08);
+    border: 1px solid rgba(167,139,250,0.3);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--srs-green);
+    box-shadow: 0 0 6px var(--srs-green);
+    flex-shrink: 0;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .live-dot.stale { background: #4b5563; box-shadow: none; animation: none; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .live-feed-text { font-family: var(--mono); font-size: 11px; color: var(--text-dim); flex: 1; }
+  .live-feed-text strong { color: var(--srs-accent); }
+
+  /* SRS inputs read-only display */
+  .srs-inputs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .srs-input-row {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .srs-input-row.live { border-color: rgba(167,139,250,0.4); }
+  .srs-input-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+  .srs-input-val { font-family: var(--mono); font-size: 13px; color: var(--srs-accent); font-weight: 500; }
+  .srs-input-val.empty { color: #4b5563; }
+
+  /* Water fraction big display */
+  .wf-display {
+    background: linear-gradient(135deg, #1a1130, #0f1825);
+    border: 1px solid rgba(167,139,250,0.3);
+    border-radius: 8px;
+    padding: 28px 24px;
+    text-align: center;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .wf-display::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(167,139,250,0.12) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .wf-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .wf-value { font-family: var(--mono); font-size: 52px; font-weight: 600; color: var(--srs-accent); letter-spacing: -2px; line-height: 1; }
+  .wf-value.empty { color: #2e3540; font-size: 32px; letter-spacing: 0; }
+  .wf-sub { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 10px; }
+  .wf-percent {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--srs-green);
+    font-weight: 500;
+    margin-top: 6px;
+  }
+
+  /* KV grid */
+  .kv-grid-srs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .kv-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+  .kv-k { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+  .kv-v { font-family: var(--mono); font-size: 13px; color: var(--text-head); font-weight: 500; }
+  .kv-v.accent { color: var(--srs-accent); }
+  .kv-v.green  { color: var(--srs-green); }
+  .kv-v.yellow { color: var(--srs-yellow); }
+
+  /* Ratio table for SRS */
+  .srs-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  .srs-table th { text-align: center; padding: 7px 8px; font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border2); }
+  .srs-table td { text-align: center; padding: 8px; border-bottom: 1px solid var(--border); }
+  .srs-table tr:last-child td { border-bottom: none; }
+  .srs-table .meas { color: #38bdf8; }
+  .srs-table .pred { color: var(--srs-accent); }
+
+  /* SRS advanced settings */
+  .adv-srs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .adv-field label { display: block; font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .adv-field input { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 4px; color: var(--text-head); font-family: var(--mono); font-size: 12px; padding: 6px 10px; outline: none; transition: border-color 0.15s; }
+  .adv-field input:focus { border-color: var(--srs-accent); }
+
+  /* Objective radio */
+  .obj-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
+  .obj-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .obj-opt input[type=radio] { accent-color: var(--srs-accent); }
+  .obj-opt span { font-family: var(--mono); font-size: 12px; color: var(--text); }
+  .obj-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; vertical-align: middle; margin-left: 4px; }
+  .obj-tag.strict { background: rgba(0,212,255,0.15); color: var(--accent); }
+  .obj-tag.combined { background: rgba(167,139,250,0.15); color: var(--srs-accent); }
+
+  /* Bounds row */
+  .bounds-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+
+  /* SRS details/summary */
+  details.srs-details { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 16px; }
+  details.srs-details summary {
+    background: var(--panel);
+    padding: 14px 18px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--srs-accent);
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  details.srs-details summary::-webkit-details-marker { display: none; }
+  details.srs-details summary::before { content: '▶'; font-size: 9px; transition: transform 0.15s; }
+  details.srs-details[open] summary::before { transform: rotate(90deg); }
+  details.srs-details .adv-content { padding: 16px 18px; background: var(--bg); border-top: 1px solid var(--border); }
+
+  /* Inline WF badge in analysis tab */
+  #wf-inline-badge {
+    display: none;
+    margin-top: 0;
+    margin-bottom: 28px;
+    background: linear-gradient(135deg, #1a1130, #101820);
+    border: 1px solid rgba(167,139,250,0.35);
+    border-radius: 6px;
+    padding: 16px 20px;
+    display: none;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .wf-badge-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); }
+  .wf-badge-value { font-family: var(--mono); font-size: 32px; font-weight: 600; color: var(--srs-accent); letter-spacing: -1px; }
+  .wf-badge-sub { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .wf-badge-sub b { color: var(--srs-green); }
+  .wf-badge-right { margin-left: auto; }
+
+  /* Error note */
+  .srs-err { font-family: var(--mono); font-size: 11px; color: #f87171; background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
+
+  /* Inconsistency note */
+  .incon-note { background: #151005; border: 1px solid #4a3a10; border-radius: 4px; padding: 10px 14px; font-family: var(--mono); font-size: 11px; color: #c8a040; margin-top: 12px; line-height: 1.6; }
+  .incon-note strong { color: var(--srs-yellow); }
+
+  /* Canvas */
+  .plot-wrap { margin-top: 4px; }
+  canvas { border-radius: 4px; display: block; }
+
+  /* Debug tab */
+  .page-tab.debug-tab.active { color: #9ca3af; border-bottom-color: #4b5563; }
+  .debug-line { display:flex; gap:10px; padding:2px 0; border-bottom:1px solid #111418; }
+  .debug-line:last-child { border-bottom:none; }
+  .debug-ts { color:#374151; flex-shrink:0; min-width:58px; }
+  .debug-tag { flex-shrink:0; min-width:72px; font-weight:600; }
+  .debug-tag.info  { color:#3b82f6; }
+  .debug-tag.ok    { color:#34d399; }
+  .debug-tag.warn  { color:#f59e0b; }
+  .debug-tag.error { color:#ef4444; }
+  .debug-tag.data  { color:#a78bfa; }
+  .debug-tag.plot  { color:#06b6d4; }
+  .debug-msg { color:#9ca3af; flex:1; word-break:break-all; }
+  .debug-val { color:#e5e7eb; }
+</style>
+</head>
+<body>
+
+<!-- ── Page tabs ── -->
+<div class="page-tabs">
+  <div class="page-tab active" data-page="analysis">Analysis</div>
+  <div class="page-tab" data-page="lut">Look Up Table</div>
+  <div class="page-tab srs-tab" data-page="srs">SRS Solver <span class="tab-badge stale" id="srs-tab-badge">—</span></div>
+</div>
+
+<!-- ══════════════════════════════════
+     PAGE 1 — Analysis
+     ══════════════════════════════════ -->
+<div class="page active" id="page-analysis">
+<div class="wrap">
+
+  <header>
+    <div class="logo">Sensor Analysis Toolkit</div>
+    <h1>Channel <span class="a">Analyser</span></h1>
+    <div class="subtitle">Average · Dark-subtract · PTFE-normalize · SRS water fraction</div>
+  </header>
+
+  <div class="panel">
+    <div class="panel-title">01 — Load CSV</div>
+    <div id="dropzone">
+      <input type="file" id="file-input" accept=".csv">
+      <span class="drop-icon">📂</span>
+      <div class="drop-label"><strong>Click to browse</strong> or drag &amp; drop a CSV file</div>
+      <div id="file-name"></div>
+    </div>
+    <div id="load-error"></div>
+  </div>
+
+  <div id="results">
+    <div class="panel results-block" style="margin-top:20px;">
+      <div class="panel-title">Raw Averages</div>
+      <table id="tbl-raw"><thead><tr><th>Channel</th><th>Scalar</th><th>Average (V)</th><th>Rows Used</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel results-block">
+      <div class="panel-title">Dark-Subtracted Averages</div>
+      <table id="tbl-dark"><thead><tr><th>Channel</th><th>Average (V)</th><th>Dark Avg (V)</th><th>Dark Sub (V)</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel results-block">
+      <div class="panel-title ptfe-title">PTFE Normalized</div>
+      <table id="tbl-ptfe">
+        <thead>
+          <tr>
+            <th>1450 4.5 mm</th>
+            <th>1650 7.0 mm</th>
+            <th>1450 7.0 mm</th>
+            <th>1650 4.5 mm</th>
+          </tr>
+        </thead>
+        <tbody><tr id="ptfe-row"><td>—</td><td>—</td><td>—</td><td>—</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel results-block">
+      <div class="panel-title" style="color:#fff;font-weight:700;">Ratios and Recovered Scattering</div>
+      <div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:0 0 auto;min-width:340px;">
+          <div style="margin-bottom:18px;">
+            <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">Select Gel LUT</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;" id="lut-selector">
+              <button class="lut-sel-btn active" data-lut="0">70%</button>
+              <button class="lut-sel-btn" data-lut="1">73.68%</button>
+              <button class="lut-sel-btn" data-lut="2">75%</button>
+              <button class="lut-sel-btn" data-lut="3">80%</button>
+            </div>
+          </div>
+          <table id="tbl-ratios" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
+            <thead>
+              <tr>
+                <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">1450 Far/Close</th>
+                <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">1650 Far/Close</th>
+                <th style="text-align:center;padding:8px 10px;font-size:12px;font-weight:700;color:#ffffff;border-bottom:1px solid var(--border2);">1450 Scattering</th>
+                <th style="text-align:center;padding:8px 10px;font-size:12px;font-weight:700;color:#ffffff;border-bottom:1px solid var(--border2);">1650 Scattering</th>
+              </tr>
+            </thead>
+            <tbody><tr id="ratios-row">
+              <td style="text-align:center;padding:12px 10px;color:var(--text);">—</td>
+              <td style="text-align:center;padding:12px 10px;color:var(--text);">—</td>
+              <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:var(--accent);">—</td>
+              <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:var(--accent);">—</td>
+            </tr></tbody>
+          </table>
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div id="inline-lut-title" style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;">LUT — 70%</div>
+          <table id="tbl-inline-lut" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+            <thead>
+              <tr>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Reduced Scattering</th>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Ratio Far/Close 1450</th>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Ratio Far/Close 1650</th>
+              </tr>
+            </thead>
+            <tbody id="inline-lut-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Inline SRS Water Fraction Badge ── -->
+    <div id="wf-inline-badge">
+      <div>
+        <div class="wf-badge-label">SRS Water Fraction</div>
+        <div class="wf-badge-value" id="wf-badge-val">—</div>
+      </div>
+      <div>
+        <div class="wf-badge-sub" id="wf-badge-sub">—</div>
+      </div>
+      <div class="wf-badge-right">
+        <button onclick="switchToSRS()" style="font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;padding:8px 16px;border-radius:4px;border:1px solid rgba(167,139,250,0.4);background:rgba(167,139,250,0.08);color:var(--srs-accent);cursor:pointer;transition:all 0.15s;">View SRS Details →</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SCALARS -->
+  <div class="panel" style="margin-top:20px;">
+    <div style="display:flex;gap:20px;align-items:flex-start;">
+      <div style="flex:1;">
+        <div class="panel-title">02 — Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(leave blank for 1.0)</span></div>
+        <div class="scalars-grid">
+          <div class="scalar-field"><label><span>D</span>Dark Voltage</label><input type="number" id="s0" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl0" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH1</span>1450 4.5 mm</label><input type="number" id="s1" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl1" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH2</span>1650 7.0 mm</label><input type="number" id="s2" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl2" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH3</span>1450 7.0 mm</label><input type="number" id="s3" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl3" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH4</span>1650 4.5 mm</label><input type="number" id="s4" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl4" min="0" max="1" step="0.001" value="1"></div>
+        </div>
+      </div>
+      <div style="flex:0 0 auto;min-width:110px;border-left:1px solid var(--border);padding-left:18px;">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:14px;">Max Range</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">D</span><input type="number" class="slider-max" id="mx0" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH1</span><input type="number" class="slider-max" id="mx1" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH2</span><input type="number" class="slider-max" id="mx2" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH3</span><input type="number" class="slider-max" id="mx3" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH4</span><input type="number" class="slider-max" id="mx4" value="1" step="any"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button id="run-btn" disabled>▶ &nbsp; Run Analysis</button>
+
+  <div class="panel" style="margin-top:20px;" id="reverse-panel">
+    <div class="panel-title">03 — Reverse Engineer Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(scalar = target ÷ raw average)</span></div>
+    <div class="scalars-grid">
+      <div class="scalar-field"><label><span>D</span>Dark Voltage</label><input type="number" id="t0" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH1</span>1450 4.5 mm</label><input type="number" id="t1" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH2</span>1650 7.0 mm</label><input type="number" id="t2" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH3</span>1450 7.0 mm</label><input type="number" id="t3" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH4</span>1650 4.5 mm</label><input type="number" id="t4" step="any" placeholder="target value"></div>
+    </div>
+    <button id="reverse-btn" style="display:block;width:100%;margin-top:16px;padding:11px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;cursor:pointer;transition:background 0.15s,color 0.15s;" disabled>⟵ &nbsp; Calculate Scalars</button>
+    <div id="reverse-error" style="margin-top:10px;"></div>
+  </div>
+
+</div>
+</div>
+
+<!-- ══════════════════════════════════
+     PAGE 2 — Look Up Table
+     ══════════════════════════════════ -->
+<div class="page" id="page-lut">
+<div class="wrap">
+  <header class="lut-header">
+    <div class="logo">Sensor Analysis Toolkit</div>
+    <h1>Look Up <span class="a">Tables</span></h1>
+    <div class="subtitle">Scattering coefficient · Ratio Far/Close 1450 · Ratio Far/Close 1650</div>
+  </header>
+  <div class="lut-tabs">
+    <button class="lut-tab active" data-lut="0">70%</button>
+    <button class="lut-tab" data-lut="1">73.68%</button>
+    <button class="lut-tab" data-lut="2">75%</button>
+    <button class="lut-tab" data-lut="3">80%</button>
+  </div>
+  <div class="lut-panel active" id="lut-panel-0">
+    <div class="panel"><div class="panel-title">LUT — 70% Added Water</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.7800</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-0"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-1">
+    <div class="panel"><div class="panel-title">LUT — 73.68% Added Water</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8168</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-1"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-2">
+    <div class="panel"><div class="panel-title">LUT — 75% Added Water</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8300</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-2"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-3">
+    <div class="panel"><div class="panel-title">LUT — 80% Added Water</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8800</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-3"></tbody></table></div>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════
+     PAGE 3 — SRS Solver
+     ══════════════════════════════════ -->
+<div class="page" id="page-srs">
+<div class="wrap">
+
+  <header>
+    <div class="logo srs">SRS Analysis Pipeline</div>
+    <h1>Water <span class="s">Fraction</span> Solver</h1>
+    <div class="subtitle">Diffusion model · Live feed from Channel Analyser · Workbook-exact formulas</div>
+  </header>
+
+  <!-- Live feed status banner -->
+  <div class="live-feed-banner">
+    <div class="live-dot stale" id="live-dot"></div>
+    <div class="live-feed-text" id="live-feed-text">
+      <strong>No data yet.</strong> Load a CSV and run analysis on the Analysis tab — inputs will populate automatically.
+    </div>
+  </div>
+
+  <!-- Live inputs display -->
+  <div class="panel">
+    <div class="panel-title srs">Live Inputs from Channel Analyser</div>
+    <div class="srs-inputs-grid">
+      <div class="srs-input-row live">
+        <span class="srs-input-label">μ′ₛ 1450 nm</span>
+        <span class="srs-input-val empty" id="live-mus1450">waiting…</span>
+      </div>
+      <div class="srs-input-row live">
+        <span class="srs-input-label">μ′ₛ 1650 nm</span>
+        <span class="srs-input-val empty" id="live-mus1650">waiting…</span>
+      </div>
+      <div class="srs-input-row live">
+        <span class="srs-input-label">Meas 1450 Close (4.5mm)</span>
+        <span class="srs-input-val empty" id="live-m1450c">waiting…</span>
+      </div>
+      <div class="srs-input-row live">
+        <span class="srs-input-label">Meas 1450 Far (7mm)</span>
+        <span class="srs-input-val empty" id="live-m1450f">waiting…</span>
+      </div>
+      <div class="srs-input-row live">
+        <span class="srs-input-label">Meas 1650 Close (4.5mm)</span>
+        <span class="srs-input-val empty" id="live-m1650c">waiting…</span>
+      </div>
+      <div class="srs-input-row live">
+        <span class="srs-input-label">Meas 1650 Far (7mm)</span>
+        <span class="srs-input-val empty" id="live-m1650f">waiting…</span>
+      </div>
+    </div>
+    <div id="srs-input-error"></div>
+  </div>
+
+  <!-- Solver settings (objective + bounds) -->
+  <div class="panel">
+    <div class="panel-title srs">Solver Settings</div>
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Objective Function</div>
+    <div class="obj-row">
+      <label class="obj-opt">
+        <input type="radio" name="srs-obj" value="strict" checked>
+        <span>Strict Workbook Mode <span class="obj-tag strict">default · error_fc only</span></span>
+      </label>
+      <label class="obj-opt">
+        <input type="radio" name="srs-obj" value="combined">
+        <span>Combined Mode <span class="obj-tag combined">error_fc + error_spectral</span></span>
+      </label>
+    </div>
+    <div class="bounds-row">
+      <div class="adv-field"><label>Water Fraction Lower Bound</label><input type="number" id="srs-wf-low" value="0.6" step="0.01" min="0" max="1"></div>
+      <div class="adv-field"><label>Water Fraction Upper Bound</label><input type="number" id="srs-wf-high" value="0.95" step="0.01" min="0" max="1"></div>
+    </div>
+  </div>
+
+  <!-- Advanced settings -->
+  <details class="srs-details">
+    <summary>Advanced Bridge / Geometry / Composition Settings</summary>
+    <div class="adv-content">
+      <div class="adv-srs-grid">
+        <div class="adv-field"><label>ρ close (4.5 mm)</label><input type="number" id="srs-rhoClose" value="0.45" step="any"></div>
+        <div class="adv-field"><label>ρ far (7 mm)</label><input type="number" id="srs-rhoFar" value="0.7" step="any"></div>
+        <div class="adv-field"><label>ρ₀</label><input type="number" id="srs-rho0" value="0" step="any"></div>
+        <div class="adv-field"><label>γ 1450</label><input type="number" id="srs-gamma1450" value="1.7697641835288578" step="any"></div>
+        <div class="adv-field"><label>γ 1650</label><input type="number" id="srs-gamma1650" value="1.3112650565438542" step="any"></div>
+        <div class="adv-field"><label>Gain Parameter (C 1450)</label><input type="number" id="srs-gain" value="32.59266291598235" step="any"></div>
+        <div class="adv-field"><label>Refractive Index n</label><input type="number" id="srs-n" value="1.37" step="any"></div>
+        <div class="adv-field"><label>IL Fraction</label><input type="number" id="srs-il" value="0.1" step="any"></div>
+        <div></div>
+        <div class="adv-field"><label>ε water 1450</label><input type="number" id="srs-ew1450" value="28.8" step="any"></div>
+        <div class="adv-field"><label>ε water 1650</label><input type="number" id="srs-ew1650" value="5.7" step="any"></div>
+        <div></div>
+        <div class="adv-field"><label>ε IL 1450</label><input type="number" id="srs-eil1450" value="0" step="any"></div>
+        <div class="adv-field"><label>ε IL 1650</label><input type="number" id="srs-eil1650" value="0" step="any"></div>
+        <div></div>
+        <div class="adv-field"><label>ε gel 1450</label><input type="number" id="srs-eg1450" value="0" step="any"></div>
+        <div class="adv-field"><label>ε gel 1650</label><input type="number" id="srs-eg1650" value="0" step="any"></div>
+        <div></div>
+      </div>
+    </div>
+  </details>
+
+  <!-- ── Results ── -->
+  <div id="srs-results-panel" style="display:none">
+
+    <!-- Big water fraction -->
+    <div class="wf-display">
+      <div class="wf-label">Solved Water Fraction</div>
+      <div class="wf-value" id="srs-wf-val">—</div>
+      <div class="wf-percent" id="srs-wf-pct">—</div>
+      <div class="wf-sub" id="srs-wf-mode">—</div>
+    </div>
+
+    <!-- Composition + absorption -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title srs">Composition &amp; Absorption</div>
+      <div class="kv-grid-srs">
+        <div class="kv-item"><div class="kv-k">Water Fraction</div><div class="kv-v green" id="r-wf">—</div></div>
+        <div class="kv-item"><div class="kv-k">Gel Fraction</div><div class="kv-v" id="r-gel">—</div></div>
+        <div class="kv-item"><div class="kv-k">IL Fraction</div><div class="kv-v" id="r-il">—</div></div>
+        <div class="kv-item"><div class="kv-k">μₐ 1450 (mm⁻¹)</div><div class="kv-v yellow" id="r-mua1450">—</div></div>
+        <div class="kv-item"><div class="kv-k">μₐ 1650 (mm⁻¹)</div><div class="kv-v yellow" id="r-mua1650">—</div></div>
+        <div class="kv-item"><div class="kv-k">Active Objective</div><div class="kv-v accent" id="r-objval">—</div></div>
+      </div>
+    </div>
+
+    <!-- Predicted vs measured -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title srs">Predicted vs Measured Signals</div>
+      <table class="srs-table">
+        <thead><tr><th>Channel</th><th class="meas">Measured (PTFE norm)</th><th class="pred">Predicted</th></tr></thead>
+        <tbody>
+          <tr><td>1450 Close 4.5mm</td><td class="meas" id="s-m1450c">—</td><td class="pred" id="s-p1450c">—</td></tr>
+          <tr><td>1450 Far 7mm</td><td class="meas" id="s-m1450f">—</td><td class="pred" id="s-p1450f">—</td></tr>
+          <tr><td>1650 Close 4.5mm</td><td class="meas" id="s-m1650c">—</td><td class="pred" id="s-p1650c">—</td></tr>
+          <tr><td>1650 Far 7mm</td><td class="meas" id="s-m1650f">—</td><td class="pred" id="s-p1650f">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Ratios + errors -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title srs">Ratios &amp; Error Terms</div>
+      <table class="srs-table">
+        <thead><tr><th>Ratio</th><th class="meas">Measured</th><th class="pred">Predicted</th></tr></thead>
+        <tbody>
+          <tr><td>Far/Close 1450</td><td class="meas" id="r-fc1450m">—</td><td class="pred" id="r-fc1450p">—</td></tr>
+          <tr><td>Far/Close 1650</td><td class="meas" id="r-fc1650m">—</td><td class="pred" id="r-fc1650p">—</td></tr>
+          <tr><td>1450/1650 Close</td><td class="meas" id="r-spcm">—</td><td class="pred" id="r-spcp">—</td></tr>
+          <tr><td>1450/1650 Far</td><td class="meas" id="r-spfm">—</td><td class="pred" id="r-spfp">—</td></tr>
+        </tbody>
+      </table>
+      <div class="kv-grid-srs" style="margin-top:10px;">
+        <div class="kv-item"><div class="kv-k">Error Far/Close</div><div class="kv-v accent" id="r-errfc">—</div></div>
+        <div class="kv-item"><div class="kv-k">Error Spectral</div><div class="kv-v" id="r-errsp">—</div></div>
+        <div class="kv-item"><div class="kv-k">Total (fc+sp)</div><div class="kv-v" id="r-errtot">—</div></div>
+      </div>
+    </div>
+
+    <div class="incon-note">
+      <strong>⚠ Workbook note:</strong> Cell J5 ("Total Error") in the Excel file is a duplicate of J3 (error_far/close) — not a true sum. 
+      The Strict mode here matches that behaviour exactly. Combined mode adds error_spectral for a genuine total.
+    </div>
+
+  </div>
+
+  <!-- Placeholder -->
+  <div id="srs-placeholder" style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:60px 20px;text-align:center;color:var(--text-dim);">
+    <div style="font-size:36px;margin-bottom:12px;">🔬</div>
+    <div style="font-family:var(--mono);font-size:13px;color:var(--text);margin-bottom:6px;">Waiting for data</div>
+    <div style="font-family:var(--mono);font-size:12px;">Load a CSV on the Analysis tab — the solver runs automatically.</div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// LUT DATA
+// ══════════════════════════════════════════════════════════════════
+const LUTS = [
+  { label:"70%",     fw:"0.7800", rows:[[0.5,0.0503581930312419,0.268654915063907],[1.0,0.0223961291025212,0.265619877163664],[2.0,0.00675849769919975,0.238911098838800],[3.0,0.0030876600827986,0.199482224101476],[5.0,0.00120533336655527,0.133906195821686],[7.0,0.000598694098497652,0.0922081056694977],[10.0,0.000246436874842456,0.0562600956051529],[15.0,8.19648112770466e-5,0.0280400090603366],[20.0,2.75676177667094e-5,0.015033749663345],[25.0,1.11065820937462e-5,0.00893414360111323],[30.0,0,0.00550245626473164]] },
+  { label:"73.68%",  fw:"0.8168", rows:[[0.5,0.04780343,0.2584382],[1.0,0.0211923,0.2550018],[2.0,0.006005975,0.2279702],[3.0,0.002544583,0.1897627],[5.0,0.0009361549,0.1269523],[7.0,0.0004517797,0.08662391],[10.0,0.0001866874,0.05242532],[15.0,5.464973e-5,0.02560226],[20.0,1.755784e-5,0.01367261],[25.0,1.689196e-6,0.007987429],[30.0,0,0.004853203]] },
+  { label:"75%",     fw:"0.8300", rows:[[0.5,0.04691898,0.254869],[1.0,0.02077645,0.2512975],[2.0,0.005756975,0.2241691],[3.0,0.002374005,0.1863929],[5.0,0.0008550223,0.124547],[7.0,0.0004083815,0.08470439],[10.0,0.0001689894,0.05111445],[15.0,4.725453e-5,0.02478049],[20.0,1.493456e-5,0.01321501],[25.0,8.596124e-7,0.007672871],[30.0,0,0.004639481]] },
+  { label:"80%",     fw:"0.8800", rows:[[0.5,0.04371464,0.2417906],[1.0,0.0192739,0.2377475],[2.0,0.004903865,0.2103367],[3.0,0.001825298,0.1741625],[5.0,0.0006065237,0.1158419],[7.0,0.0002785654,0.07781135],[10.0,0.0001158814,0.04643944],[15.0,2.724329e-5,0.02189988],[20.0,8.09069e-6,0.0116163],[25.0,0,0.006589658],[30.0,0,0.00391185]] },
+];
+
+// Populate LUT tables
+LUTS.forEach((lut, i) => {
+  const tbody = document.getElementById(`lut-body-${i}`);
+  lut.rows.forEach(([sc, r1450, r1650]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="lut-sc">${sc}</td><td>${r1450.toFixed(9)}</td><td>${r1650.toFixed(9)}</td>`;
+    tbody.appendChild(tr);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// ANALYSIS CONSTANTS
+// ══════════════════════════════════════════════════════════════════
+const CHANNEL_COLS  = ['dark_V', 'CH1_V', 'CH2_V', 'CH3_V', 'CH4_V'];
+const CHANNEL_NAMES = ['Dark Voltage', '1450 4.5 mm', '1650 7.0 mm', '1450 7.0 mm', '1650 4.5 mm'];
+const PTFE_REF = [9.176146663, 5.255547687, 6.634385111, 8.759144989];
+
+let rawData     = null;
+let rawAverages = null;
+let lastPtfe    = null;
+let selectedLut = 0;
+
+
+// ══════════════════════════════════════════════════════════════════
+// PAGE / TAB SWITCHING
+// ══════════════════════════════════════════════════════════════════
+document.querySelectorAll('.page-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+  });
+});
+
+function switchToSRS() {
+  document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelector('.page-tab.srs-tab').classList.add('active');
+  document.getElementById('page-srs').classList.add('active');
+}
+
+document.querySelectorAll('.lut-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.lut-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.lut-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('lut-panel-' + tab.dataset.lut).classList.add('active');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// FILE HANDLING
+// ══════════════════════════════════════════════════════════════════
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const fileName  = document.getElementById('file-name');
+const loadError = document.getElementById('load-error');
+const runBtn    = document.getElementById('run-btn');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+function loadFile(file) {
+  loadError.innerHTML = ''; fileName.textContent = ''; rawData = null; runBtn.disabled = true;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try { rawData = parseCSV(e.target.result); fileName.textContent = `✓  ${file.name}  —  ${rawData.length} data rows loaded`; runBtn.disabled = false; }
+    catch(err) { loadError.innerHTML = `<div class="error-msg">⚠ ${err.message}</div>`; }
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) throw new Error('File has no data rows.');
+  const headers = lines[0].split(',').map(h => h.trim());
+  const chIdx = CHANNEL_COLS.map(col => { const i = headers.indexOf(col); if (i === -1) throw new Error(`Column "${col}" not found in header.`); return i; });
+  return lines.slice(1).map(line => { const cells = line.split(','); return chIdx.map(idx => { const v = parseFloat(cells[idx]); return isNaN(v) ? NaN : v; }); });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SLIDER / INPUT SYNC
+// ══════════════════════════════════════════════════════════════════
+for (let i = 0; i < 5; i++) {
+  const num = document.getElementById('s' + i);
+  const sld = document.getElementById('sl' + i);
+  const mx  = document.getElementById('mx' + i);
+
+  mx.addEventListener('change', () => {
+    const m = parseFloat(mx.value);
+    if (!isNaN(m) && m > 0) {
+      sld.max = m;
+      if (parseFloat(sld.value) > m) sld.value = m;
+    }
+  });
+
+  num.addEventListener('input', () => {
+    const v = parseFloat(num.value);
+    if (!isNaN(v) && v >= 0 && v <= parseFloat(sld.max)) sld.value = v;
+    if (rawData) runAnalysis();
+  });
+
+  sld.addEventListener('input', () => {
+    num.value = parseFloat(sld.value).toFixed(3);
+    if (rawData) runAnalysis();
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ANALYSIS
+// ══════════════════════════════════════════════════════════════════
+function runAnalysis() {
+  if (!rawData) return;
+  const scalars = [0,1,2,3,4].map(i => { const v = parseFloat(document.getElementById('s' + i).value); return isNaN(v) ? 1.0 : v; });
+  const sums = new Array(5).fill(0), counts = new Array(5).fill(0), skipped = new Array(5).fill(0);
+
+  for (const row of rawData) {
+    for (let c = 0; c < 5; c++) {
+      if (isNaN(row[c])) skipped[c]++; else { sums[c] += row[c] * scalars[c]; counts[c]++; }
+    }
+  }
+
+  const unscaledSums = new Array(5).fill(0), unscaledCounts = new Array(5).fill(0);
+  for (const row of rawData) {
+    for (let c = 0; c < 5; c++) {
+      if (!isNaN(row[c])) { unscaledSums[c] += row[c]; unscaledCounts[c]++; }
+    }
+  }
+  rawAverages = unscaledCounts.map((n, c) => n > 0 ? unscaledSums[c] / n : NaN);
+  document.getElementById('reverse-btn').disabled = false;
+
+  const averages = counts.map((n, c) => n > 0 ? sums[c] / n : NaN);
+  const darkAvg  = averages[0];
+  const darkSub  = averages.slice(1).map(a => a - darkAvg);
+  const ptfe     = darkSub.map((v, i) => v / PTFE_REF[i]);
+  const total    = rawData.length;
+
+  // Raw averages table
+  const tbody1 = document.querySelector('#tbl-raw tbody'); tbody1.innerHTML = '';
+  for (let c = 0; c < 5; c++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td class="ch-name">${CHANNEL_NAMES[c]}</td><td class="${scalars[c] !== 1.0 ? 'val-warn' : ''}">${scalars[c].toFixed(4)}</td><td class="val-accent">${fmt(averages[c],6)}</td><td style="color:var(--text-dim)">${counts[c]}/${total}${skipped[c]?` <span style="color:#ff5555">(${skipped[c]} skipped)</span>`:''}</td>`;
+    tbody1.appendChild(row);
+  }
+
+  // Dark-subtracted table
+  const tbody2 = document.querySelector('#tbl-dark tbody'); tbody2.innerHTML = '';
+  for (let c = 0; c < 4; c++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td class="ch-name">${CHANNEL_NAMES[c+1]}</td><td>${fmt(averages[c+1],6)}</td><td style="color:var(--text-dim)">${fmt(darkAvg,6)}</td><td class="${darkSub[c]<0?'val-warn':'val-accent'}">${fmt(darkSub[c],6)}</td>`;
+    tbody2.appendChild(row);
+  }
+
+  // PTFE table
+  const ptfeRow = document.getElementById('ptfe-row');
+  ptfeRow.innerHTML = ptfe.map(v => {
+    const cls = (isNaN(v) || v < 0 || v > 1) ? 'val-warn' : 'val-green';
+    return `<td class="${cls}" style="font-weight:700;font-size:14px;">${fmt(v, 9)}</td>`;
+  }).join('');
+
+  lastPtfe = ptfe;
+  document.getElementById('results').style.display = 'block';
+
+  updateRatios(ptfe);
+}
+
+runBtn.addEventListener('click', runAnalysis);
+
+// ══════════════════════════════════════════════════════════════════
+// REVERSE ENGINEER SCALARS
+// ══════════════════════════════════════════════════════════════════
+const reverseBtn = document.getElementById('reverse-btn');
+reverseBtn.addEventListener('mouseenter', () => { reverseBtn.style.background = 'rgba(0,212,255,0.1)'; });
+reverseBtn.addEventListener('mouseleave', () => { reverseBtn.style.background = 'transparent'; });
+
+reverseBtn.addEventListener('click', () => {
+  if (!rawAverages) return;
+  const errEl = document.getElementById('reverse-error');
+  errEl.innerHTML = '';
+  let anySet = false;
+
+  for (let i = 0; i < 5; i++) {
+    const target = parseFloat(document.getElementById('t' + i).value);
+    if (isNaN(target)) continue;
+    const raw = rawAverages[i];
+    if (isNaN(raw) || raw === 0) {
+      errEl.innerHTML = `<div class="error-msg">⚠ Cannot compute scalar for channel ${i} — raw average is zero or missing.</div>`;
+      continue;
+    }
+    const scalar = target / raw;
+    const numInput = document.getElementById('s' + i);
+    const sldInput = document.getElementById('sl' + i);
+    const mxInput  = document.getElementById('mx' + i);
+    numInput.value = scalar.toFixed(6);
+    const currentMax = parseFloat(mxInput.value);
+    if (scalar > currentMax) { mxInput.value = Math.ceil(scalar * 1.2); sldInput.max = mxInput.value; }
+    sldInput.value = Math.min(scalar, parseFloat(sldInput.max));
+    anySet = true;
+  }
+  if (anySet && rawData) runAnalysis();
+});
+
+// ══════════════════════════════════════════════════════════════════
+// LUT HELPERS
+// ══════════════════════════════════════════════════════════════════
+function renderInlineLut(lutIdx) {
+  const lut = LUTS[lutIdx];
+  document.getElementById('inline-lut-title').textContent = `LUT — ${lut.label}`;
+  const tbody = document.getElementById('inline-lut-body');
+  tbody.innerHTML = '';
+  lut.rows.forEach(([sc, r1450, r1650]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--accent);font-weight:500;">${sc}</td>
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text);">${r1450.toFixed(9)}</td>
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text);">${r1650.toFixed(9)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.querySelectorAll('.lut-sel-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lut-sel-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedLut = parseInt(btn.dataset.lut);
+    renderInlineLut(selectedLut);
+    if (lastPtfe) updateRatios(lastPtfe);
+  });
+});
+
+function logLinearInterp(lut, targetRatio, colIdx) {
+  const rows = lut.rows;
+  for (let i = 0; i < rows.length - 1; i++) {
+    const y1 = rows[i][colIdx], y2 = rows[i+1][colIdx];
+    const x1 = rows[i][0],     x2 = rows[i+1][0];
+    if (targetRatio <= y1 && targetRatio >= y2) {
+      if (y1 <= 0 || y2 <= 0 || targetRatio <= 0) return NaN;
+      return x1 + (x2 - x1) * (Math.log(targetRatio) - Math.log(y1)) / (Math.log(y2) - Math.log(y1));
+    }
+  }
+  return NaN;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// updateRatios — computes scattering coefficients, then triggers SRS
+//
+// ptfe layout: [1450 4.5mm, 1650 7.0mm, 1450 7.0mm, 1650 4.5mm]
+//   index:           0           1           2           3
+//
+// SRS needs:
+//   meas_1450_close = ptfe[0]
+//   meas_1450_far   = ptfe[2]
+//   meas_1650_close = ptfe[3]
+//   meas_1650_far   = ptfe[1]
+//   mus_1450        = sc1450 (from LUT)
+//   mus_1650        = sc1650 (from LUT)
+// ══════════════════════════════════════════════════════════════════
+function updateRatios(ptfe) {
+  const ratio1450 = ptfe[2] / ptfe[0];
+  const ratio1650 = ptfe[1] / ptfe[3];
+
+  const lut = LUTS[selectedLut];
+  const sc1450 = logLinearInterp(lut, ratio1450, 1);
+  const sc1650 = logLinearInterp(lut, ratio1650, 2);
+
+  const scColor = v => isNaN(v) ? '#ff5555' : 'var(--accent)';
+  document.getElementById('ratios-row').innerHTML = `
+    <td style="text-align:center;padding:12px 10px;color:var(--text);">${fmt(ratio1450, 9)}</td>
+    <td style="text-align:center;padding:12px 10px;color:var(--text);">${fmt(ratio1650, 9)}</td>
+    <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:${scColor(sc1450)};">${fmt(sc1450, 6)}</td>
+    <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:${scColor(sc1650)};">${fmt(sc1650, 6)}</td>
+  `;
+
+  // Feed into SRS solver
+  runSRSSolver(ptfe, sc1450, sc1650);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SRS FORWARD MODEL — exact workbook formulas
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute K — exact Excel workbook formula:
+ * a = ((n-1)/(n+1))^2
+ * b = cos(asin(1/n))
+ * K = ((1-a)*(1-b^2)) / ((1+a)*(1-a)*(b^3))
+ */
+function computeK(n) {
+  const a = Math.pow((n - 1) / (n + 1), 2);
+  const b = Math.cos(Math.asin(1 / n));
+  return ((1 - a) * (1 - b * b)) / ((1 + a) * (1 - a) * Math.pow(b, 3));
+}
+
+/**
+ * Forward model for one channel.
+ * Maps to workbook columns: N(D), AL(z0), AN(K), AM(zb),
+ * U(eff_rho), V(mu_eff), S(r1), T(r2), Q(pseudo), R(image), M(prefactor), L(signal)
+ */
+function forwardModel(mus, mua, rho, gamma, C, rho0, n) {
+  const D        = 1 / (3 * mus);
+  const z0       = 1 / mus;
+  const K        = computeK(n);
+  const zb       = (2 * D) / K;
+  const eff_rho  = rho * gamma + rho0;
+  const mu_eff   = Math.sqrt(3 * mua * mus);
+  const r1       = Math.sqrt(eff_rho * eff_rho + z0 * z0);
+  const r2       = Math.sqrt(eff_rho * eff_rho + Math.pow(z0 + 2 * zb, 2));
+  const pseudo   = Math.exp(-mu_eff * r1) / r1;
+  const image    = Math.exp(-mu_eff * r2) / r2;
+  return (C / (4 * Math.PI * D)) * (pseudo - image);
+}
+
+/** Compute all 4 predicted signals for a given water fraction */
+function computeSignals(wf, p) {
+  const gelFrac = 1 - wf - p.il;
+  const mua1450 = wf * p.ew1450 + gelFrac * p.eg1450 + p.il * p.eil1450;
+  const mua1650 = wf * p.ew1650 + gelFrac * p.eg1650 + p.il * p.eil1650;
+  return {
+    p1450c: forwardModel(p.mus1450, mua1450, p.rhoClose, p.gamma1450, p.gain, p.rho0, p.n),
+    p1450f: forwardModel(p.mus1450, mua1450, p.rhoFar,   p.gamma1450, p.gain, p.rho0, p.n),
+    p1650c: forwardModel(p.mus1650, mua1650, p.rhoClose, p.gamma1650, 1,      p.rho0, p.n),
+    p1650f: forwardModel(p.mus1650, mua1650, p.rhoFar,   p.gamma1650, 1,      p.rho0, p.n),
+    mua1450, mua1650, gelFrac
+  };
+}
+
+/**
+ * Error functions — exact workbook formulas:
+ *   J3 = error_far_close = (ln(D6/F6))^2 + (ln(D7/F7))^2
+ *   J4 = error_spectral  = (ln(D8/F8))^2 + (ln(D9/F9))^2
+ *   J5 = "Total Error"   = duplicate of J3 (workbook inconsistency)
+ */
+function computeErrors(wf, p) {
+  const { p1450c, p1450f, p1650c, p1650f } = computeSignals(wf, p);
+  const mfc1450 = p.m1450f / p.m1450c;
+  const mfc1650 = p.m1650f / p.m1650c;
+  const pfc1450 = p1450f / p1450c;
+  const pfc1650 = p1650f / p1650c;
+  const msc = p.m1450c / p.m1650c;
+  const msf = p.m1450f / p.m1650f;
+  const psc = p1450c / p1650c;
+  const psf = p1450f / p1650f;
+  const err_fc = Math.pow(Math.log(mfc1450 / pfc1450), 2) + Math.pow(Math.log(mfc1650 / pfc1650), 2);
+  const err_sp = Math.pow(Math.log(msc / psc), 2) + Math.pow(Math.log(msf / psf), 2);
+  return { err_fc, err_sp, mfc1450, mfc1650, pfc1450, pfc1650, msc, msf, psc, psf, p1450c, p1450f, p1650c, p1650f };
+}
+
+/** Golden-section search — 1D bounded minimiser */
+function goldenSearch(f, lo, hi, tol) {
+  tol = tol || 1e-11;
+  const phi = (Math.sqrt(5) - 1) / 2;
+  let a = lo, b = hi;
+  let c = b - phi * (b - a), d = a + phi * (b - a);
+  while (Math.abs(b - a) > tol) {
+    if (f(c) < f(d)) b = d; else a = c;
+    c = b - phi * (b - a); d = a + phi * (b - a);
+  }
+  return (a + b) / 2;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// READ SRS PARAMS from UI
+// ══════════════════════════════════════════════════════════════════
+function getSRSParams(mus1450, mus1650, m1450c, m1450f, m1650c, m1650f) {
+  return {
+    mus1450, mus1650,
+    m1450c, m1450f, m1650c, m1650f,
+    rhoClose: parseFloat(document.getElementById('srs-rhoClose').value),
+    rhoFar:   parseFloat(document.getElementById('srs-rhoFar').value),
+    rho0:     parseFloat(document.getElementById('srs-rho0').value),
+    gamma1450:parseFloat(document.getElementById('srs-gamma1450').value),
+    gamma1650:parseFloat(document.getElementById('srs-gamma1650').value),
+    gain:     parseFloat(document.getElementById('srs-gain').value),
+    n:        parseFloat(document.getElementById('srs-n').value),
+    il:       parseFloat(document.getElementById('srs-il').value),
+    ew1450:   parseFloat(document.getElementById('srs-ew1450').value),
+    ew1650:   parseFloat(document.getElementById('srs-ew1650').value),
+    eil1450:  parseFloat(document.getElementById('srs-eil1450').value),
+    eil1650:  parseFloat(document.getElementById('srs-eil1650').value),
+    eg1450:   parseFloat(document.getElementById('srs-eg1450').value),
+    eg1650:   parseFloat(document.getElementById('srs-eg1650').value),
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// MAIN SRS SOLVE — called automatically from updateRatios
+// ptfe[0]=1450@4.5mm, ptfe[1]=1650@7mm, ptfe[2]=1450@7mm, ptfe[3]=1650@4.5mm
+// ══════════════════════════════════════════════════════════════════
+let lastSRSParams = null;
+
+function runSRSSolver(ptfe, sc1450, sc1650) {
+  const errEl = document.getElementById('srs-input-error');
+  errEl.innerHTML = '';
+
+  // Validate inputs
+  const missing = [];
+  if (!ptfe || ptfe.some(v => isNaN(v) || v <= 0)) missing.push('PTFE normalised values');
+  if (isNaN(sc1450) || sc1450 <= 0) missing.push('μ\u2032ₛ 1450 (out of LUT range)');
+  if (isNaN(sc1650) || sc1650 <= 0) missing.push('μ\u2032ₛ 1650 (out of LUT range)');
+
+  // Update live inputs display
+  const fmte = v => isNaN(v) ? '\u2014' : v.toExponential(6);
+  const fmtv = v => isNaN(v) ? '\u2014' : v.toFixed(6);
+  document.getElementById('live-mus1450').textContent  = fmtv(sc1450);
+  document.getElementById('live-mus1650').textContent  = fmtv(sc1650);
+  document.getElementById('live-m1450c').textContent   = ptfe ? fmte(ptfe[0]) : '\u2014';
+  document.getElementById('live-m1450f').textContent   = ptfe ? fmte(ptfe[2]) : '\u2014';
+  document.getElementById('live-m1650c').textContent   = ptfe ? fmte(ptfe[3]) : '\u2014';
+  document.getElementById('live-m1650f').textContent   = ptfe ? fmte(ptfe[1]) : '\u2014';
+
+  ['live-mus1450','live-mus1650','live-m1450c','live-m1450f','live-m1650c','live-m1650f'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('empty');
+    if (el.textContent === '\u2014') el.classList.add('empty');
+  });
+
+  if (missing.length > 0) {
+    document.getElementById('live-dot').classList.add('stale');
+    document.getElementById('live-feed-text').innerHTML = `<strong>\u26a0 Cannot solve:</strong> ${missing.join(', ')}. Check LUT range or data.`;
+    document.getElementById('srs-tab-badge').textContent = 'ERR';
+    document.getElementById('srs-tab-badge').classList.add('stale');
+    errEl.innerHTML = `<div class="srs-err">\u26a0 ${missing.join(' \u00b7 ')}</div>`;
+    return;
+  }
+
+  // Map ptfe channels to SRS measurements
+  const p = getSRSParams(sc1450, sc1650, ptfe[0], ptfe[2], ptfe[3], ptfe[1]);
+  lastSRSParams = { ptfe, sc1450, sc1650, params: p };
+
+  const wfLow  = Math.max(0, parseFloat(document.getElementById('srs-wf-low').value)  || 0.6);
+  const wfHigh = Math.min(1 - p.il, parseFloat(document.getElementById('srs-wf-high').value) || 0.95);
+  const mode   = document.querySelector('input[name="srs-obj"]:checked').value;
+
+  const objective = wf => {
+    const { err_fc, err_sp } = computeErrors(wf, p);
+    return mode === 'combined' ? err_fc + err_sp : err_fc;
+  };
+
+  const solvedWF = goldenSearch(objective, wfLow, wfHigh);
+  const res = computeErrors(solvedWF, p);
+  const { mua1450, mua1650, gelFrac } = computeSignals(solvedWF, p);
+  const objVal = mode === 'combined' ? res.err_fc + res.err_sp : res.err_fc;
+
+  // Update live status
+  document.getElementById('live-dot').classList.remove('stale');
+  document.getElementById('live-feed-text').innerHTML =
+    `<strong>Live \u00b7 </strong> Last solve: wf = <strong>${solvedWF.toFixed(8)}</strong> &nbsp;|&nbsp; LUT: <strong>${LUTS[selectedLut].label}</strong> &nbsp;|&nbsp; Mode: <strong>${mode === 'combined' ? 'Combined' : 'Strict'}</strong>`;
+
+  const badge = document.getElementById('srs-tab-badge');
+  badge.textContent = (solvedWF * 100).toFixed(1) + '%';
+  badge.classList.remove('stale');
+
+  const inlineBadge = document.getElementById('wf-inline-badge');
+  inlineBadge.style.display = 'flex';
+  document.getElementById('wf-badge-val').textContent = solvedWF.toFixed(6);
+  document.getElementById('wf-badge-sub').innerHTML =
+    `<b>${(solvedWF*100).toFixed(2)}%</b> water &nbsp;\u00b7&nbsp; gel: ${gelFrac.toFixed(4)} &nbsp;\u00b7&nbsp; err_fc: ${res.err_fc.toFixed(6)}`;
+
+  document.getElementById('srs-placeholder').style.display = 'none';
+  document.getElementById('srs-results-panel').style.display = 'block';
+
+  document.getElementById('srs-wf-val').textContent = solvedWF.toFixed(8);
+  document.getElementById('srs-wf-pct').textContent = (solvedWF * 100).toFixed(3) + ' %';
+  document.getElementById('srs-wf-mode').textContent = mode === 'combined'
+    ? 'Combined Objective Mode (error_fc + error_spectral)'
+    : 'Strict Workbook Mode (error_far_close only)';
+
+  document.getElementById('r-wf').textContent      = solvedWF.toFixed(8);
+  document.getElementById('r-gel').textContent     = gelFrac.toFixed(8);
+  document.getElementById('r-il').textContent      = p.il.toFixed(4);
+  document.getElementById('r-mua1450').textContent = mua1450.toFixed(8);
+  document.getElementById('r-mua1650').textContent = mua1650.toFixed(8);
+  document.getElementById('r-objval').textContent  = objVal.toFixed(10);
+
+  document.getElementById('s-m1450c').textContent = p.m1450c.toExponential(7);
+  document.getElementById('s-m1450f').textContent = p.m1450f.toExponential(7);
+  document.getElementById('s-m1650c').textContent = p.m1650c.toExponential(7);
+  document.getElementById('s-m1650f').textContent = p.m1650f.toExponential(7);
+  document.getElementById('s-p1450c').textContent = res.p1450c.toExponential(7);
+  document.getElementById('s-p1450f').textContent = res.p1450f.toExponential(7);
+  document.getElementById('s-p1650c').textContent = res.p1650c.toExponential(7);
+  document.getElementById('s-p1650f').textContent = res.p1650f.toExponential(7);
+
+  document.getElementById('r-fc1450m').textContent = res.mfc1450.toExponential(6);
+  document.getElementById('r-fc1450p').textContent = res.pfc1450.toExponential(6);
+  document.getElementById('r-fc1650m').textContent = res.mfc1650.toExponential(6);
+  document.getElementById('r-fc1650p').textContent = res.pfc1650.toExponential(6);
+  document.getElementById('r-spcm').textContent    = res.msc.toExponential(6);
+  document.getElementById('r-spcp').textContent    = res.psc.toExponential(6);
+  document.getElementById('r-spfm').textContent    = res.msf.toExponential(6);
+  document.getElementById('r-spfp').textContent    = res.psf.toExponential(6);
+  document.getElementById('r-errfc').textContent   = res.err_fc.toFixed(10);
+  document.getElementById('r-errsp').textContent   = res.err_sp.toFixed(10);
+  document.getElementById('r-errtot').textContent  = (res.err_fc + res.err_sp).toFixed(10);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// RE-SOLVE on SRS settings change
+// ══════════════════════════════════════════════════════════════════
+function reSolveIfReady() {
+  if (lastSRSParams) {
+    runSRSSolver(lastSRSParams.ptfe, lastSRSParams.sc1450, lastSRSParams.sc1650);
+  }
+}
+
+document.querySelectorAll('input[name="srs-obj"]').forEach(r => r.addEventListener('change', reSolveIfReady));
+document.getElementById('srs-wf-low').addEventListener('input',  reSolveIfReady);
+document.getElementById('srs-wf-high').addEventListener('input', reSolveIfReady);
+
+['srs-rhoClose','srs-rhoFar','srs-rho0','srs-gamma1450','srs-gamma1650',
+ 'srs-gain','srs-n','srs-il','srs-ew1450','srs-ew1650',
+ 'srs-eil1450','srs-eil1650','srs-eg1450','srs-eg1650'].forEach(id => {
+  document.getElementById(id).addEventListener('input', reSolveIfReady);
+});
+
+// ══════════════════════════════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════════════════════════════
+function fmt(v, dec) { return isNaN(v) ? '\u2014' : v.toFixed(dec); }
+
+// ══════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════
+renderInlineLut(0);
+</script>
+</body>
+</html>
