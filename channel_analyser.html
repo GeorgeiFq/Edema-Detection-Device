@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Channel Analyser</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:        #0d0f12;
+    --panel:     #13171e;
+    --border:    #232830;
+    --border2:   #2e3540;
+    --accent:    #00d4ff;
+    --accent2:   #00ff99;
+    --warn:      #ffb300;
+    --text:      #c8d0dc;
+    --text-dim:  #5a6475;
+    --text-head: #ffffff;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 32px 24px 64px;
+  }
+
+  /* scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ── Header ── */
+  header { margin-bottom: 36px; }
+  .logo {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text-head);
+    letter-spacing: -0.02em;
+  }
+  h1 span { color: var(--accent); }
+  .subtitle {
+    margin-top: 6px;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 300;
+  }
+
+  /* ── Panels ── */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .panel-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Drop zone ── */
+  #dropzone {
+    border: 2px dashed var(--border2);
+    border-radius: 6px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  #dropzone:hover, #dropzone.over {
+    border-color: var(--accent);
+    background: rgba(0,212,255,0.04);
+  }
+  #dropzone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+    display: block;
+  }
+  .drop-label {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .drop-label strong { color: var(--accent); font-weight: 500; }
+  #file-name {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent2);
+    min-height: 18px;
+  }
+
+  /* ── Scalars grid ── */
+  .scalars-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 520px) { .scalars-grid { grid-template-columns: 1fr; } }
+
+  .scalar-field label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .scalar-field label span {
+    color: var(--accent);
+    margin-right: 4px;
+  }
+  .scalar-field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text-head);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .scalar-field input:focus { border-color: var(--accent); }
+  .scalar-field input::placeholder { color: var(--text-dim); }
+
+  /* ── Run button ── */
+  #run-btn {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 13px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+  #run-btn:hover { background: #33ddff; }
+  #run-btn:active { transform: scale(0.99); }
+  #run-btn:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+
+  /* ── Results ── */
+  #results { display: none; }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  thead tr { border-bottom: 1px solid var(--border2); }
+  th {
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  th:not(:first-child) { text-align: right; }
+  td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  td:not(:first-child) { text-align: right; color: var(--text-head); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .ch-name { color: var(--text-dim); }
+  .val-accent { color: var(--accent) !important; }
+  .val-green  { color: var(--accent2) !important; }
+  .val-warn   { color: var(--warn) !important; }
+
+  .results-block { margin-bottom: 28px; }
+
+  .scalar-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: rgba(0,212,255,0.1);
+    color: var(--accent);
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  .error-msg {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #ff5555;
+    background: rgba(255,85,85,0.08);
+    border: 1px solid rgba(255,85,85,0.2);
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">Sensor Analysis Toolkit</div>
+    <h1>Channel <span>Analyser</span></h1>
+    <div class="subtitle">Average · Dark-subtract · PTFE-normalize</div>
+  </header>
+
+  <!-- File picker -->
+  <div class="panel">
+    <div class="panel-title">01 — Load CSV</div>
+    <div id="dropzone">
+      <input type="file" id="file-input" accept=".csv">
+      <span class="drop-icon">📂</span>
+      <div class="drop-label"><strong>Click to browse</strong> or drag &amp; drop a CSV file</div>
+      <div id="file-name"></div>
+    </div>
+    <div id="load-error"></div>
+  </div>
+
+  <!-- Scalars -->
+  <div class="panel">
+    <div class="panel-title">02 — Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(leave blank for 1.0)</span></div>
+    <div class="scalars-grid">
+      <div class="scalar-field">
+        <label><span>D</span>Dark Voltage</label>
+        <input type="number" id="s0" step="any" placeholder="1.0">
+      </div>
+      <div class="scalar-field">
+        <label><span>CH1</span>1450 4.5 mm</label>
+        <input type="number" id="s1" step="any" placeholder="1.0">
+      </div>
+      <div class="scalar-field">
+        <label><span>CH2</span>1650 7.0 mm</label>
+        <input type="number" id="s2" step="any" placeholder="1.0">
+      </div>
+      <div class="scalar-field">
+        <label><span>CH3</span>1450 7.0 mm</label>
+        <input type="number" id="s3" step="any" placeholder="1.0">
+      </div>
+      <div class="scalar-field">
+        <label><span>CH4</span>1650 4.5 mm</label>
+        <input type="number" id="s4" step="any" placeholder="1.0">
+      </div>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <button id="run-btn" disabled>▶ &nbsp; Run Analysis</button>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Raw averages -->
+    <div class="panel results-block">
+      <div class="panel-title">Raw Averages</div>
+      <table id="tbl-raw">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Scalar</th>
+            <th>Average (V)</th>
+            <th>Rows Used</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Dark subtracted -->
+    <div class="panel results-block">
+      <div class="panel-title">Dark-Subtracted Averages</div>
+      <table id="tbl-dark">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Average (V)</th>
+            <th>Dark Avg (V)</th>
+            <th>Dark Sub (V)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- PTFE normalized -->
+    <div class="panel results-block">
+      <div class="panel-title">PTFE Normalized</div>
+      <table id="tbl-ptfe">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Dark Sub (V)</th>
+            <th>PTFE Ref</th>
+            <th>Normalized</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+  </div><!-- /results -->
+
+</div><!-- /wrap -->
+
+<script>
+// ── Constants ────────────────────────────────────────────────────────────────
+const CHANNEL_COLS  = ['dark_V', 'CH1_V', 'CH2_V', 'CH3_V', 'CH4_V'];
+const CHANNEL_NAMES = ['Dark Voltage', '1450 4.5 mm', '1650 7.0 mm', '1450 7.0 mm', '1650 4.5 mm'];
+const PTFE = [9.176146663, 5.255547687, 6.634385111, 8.759144989];
+
+// ── State ────────────────────────────────────────────────────────────────────
+let rawData = null; // array of rows, each row = array of 5 floats (or NaN)
+
+// ── File handling ─────────────────────────────────────────────────────────────
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const fileName  = document.getElementById('file-name');
+const loadError = document.getElementById('load-error');
+const runBtn    = document.getElementById('run-btn');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  loadError.innerHTML = '';
+  fileName.textContent = '';
+  rawData = null;
+  runBtn.disabled = true;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      rawData = parseCSV(e.target.result);
+      fileName.textContent = `✓  ${file.name}  —  ${rawData.length} data rows loaded`;
+      runBtn.disabled = false;
+    } catch(err) {
+      loadError.innerHTML = `<div class="error-msg">⚠ ${err.message}</div>`;
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) throw new Error('File has no data rows.');
+
+  const headers = lines[0].split(',').map(h => h.trim());
+
+  // Find column indices
+  const chIdx = CHANNEL_COLS.map(col => {
+    const i = headers.indexOf(col);
+    if (i === -1) throw new Error(`Column "${col}" not found in header.`);
+    return i;
+  });
+
+  const rows = [];
+  for (let r = 1; r < lines.length; r++) {
+    const cells = lines[r].split(',');
+    const row = chIdx.map(idx => {
+      const v = parseFloat(cells[idx]);
+      return isNaN(v) ? NaN : v;
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+// ── Analysis ─────────────────────────────────────────────────────────────────
+runBtn.addEventListener('click', () => {
+  if (!rawData) return;
+
+  const scalars = [0,1,2,3,4].map(i => {
+    const v = parseFloat(document.getElementById('s' + i).value);
+    return isNaN(v) ? 1.0 : v;
+  });
+
+  const sums    = new Array(5).fill(0);
+  const counts  = new Array(5).fill(0);
+  const skipped = new Array(5).fill(0);
+
+  for (const row of rawData) {
+    for (let c = 0; c < 5; c++) {
+      if (isNaN(row[c])) { skipped[c]++; }
+      else { sums[c] += row[c] * scalars[c]; counts[c]++; }
+    }
+  }
+
+  const averages = counts.map((n, c) => n > 0 ? sums[c] / n : NaN);
+  const darkAvg  = averages[0];
+  const darkSub  = averages.slice(1).map(a => a - darkAvg);
+  const ptfe     = darkSub.map((v, i) => v / PTFE[i]);
+  const total    = rawData.length;
+
+  // ── Table 1: Raw averages ──────────────────────────────
+  const tbody1 = document.querySelector('#tbl-raw tbody');
+  tbody1.innerHTML = '';
+  for (let c = 0; c < 5; c++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="ch-name">${CHANNEL_NAMES[c]}</td>
+      <td class="${scalars[c] !== 1.0 ? 'val-warn' : ''}">${scalars[c].toFixed(4)}</td>
+      <td class="val-accent">${fmt(averages[c], 6)}</td>
+      <td style="color:var(--text-dim)">${counts[c]}/${total}${skipped[c] ? ` <span style="color:#ff5555">(${skipped[c]} skipped)</span>` : ''}</td>
+    `;
+    tbody1.appendChild(row);
+  }
+
+  // ── Table 2: Dark subtracted ───────────────────────────
+  const tbody2 = document.querySelector('#tbl-dark tbody');
+  tbody2.innerHTML = '';
+  for (let c = 0; c < 4; c++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="ch-name">${CHANNEL_NAMES[c + 1]}</td>
+      <td>${fmt(averages[c + 1], 6)}</td>
+      <td style="color:var(--text-dim)">${fmt(darkAvg, 6)}</td>
+      <td class="${darkSub[c] < 0 ? 'val-warn' : 'val-accent'}">${fmt(darkSub[c], 6)}</td>
+    `;
+    tbody2.appendChild(row);
+  }
+
+  // ── Table 3: PTFE normalized ───────────────────────────
+  const tbody3 = document.querySelector('#tbl-ptfe tbody');
+  tbody3.innerHTML = '';
+  for (let c = 0; c < 4; c++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="ch-name">${CHANNEL_NAMES[c + 1]}</td>
+      <td>${fmt(darkSub[c], 6)}</td>
+      <td style="color:var(--text-dim)">${PTFE[c].toFixed(9)}</td>
+      <td class="val-green">${fmt(ptfe[c], 9)}</td>
+    `;
+    tbody3.appendChild(row);
+  }
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+});
+
+function fmt(v, dec) {
+  return isNaN(v) ? '—' : v.toFixed(dec);
+}
+</script>
+</body>
+</html>
