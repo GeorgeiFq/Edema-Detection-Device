@@ -14,9 +14,9 @@
     --border2:   #2e3540;
     --accent:    #00d4ff;
     --accent2:   #00ff99;
-    --warn:      #ffb300;
-    --text:      #c8d0dc;
-    --text-dim:  #5a6475;
+    --warn:      #ff3333;
+    --text:      #dde4ed;
+    --text-dim:  #7e8fa8;
     --text-head: #ffffff;
     --mono:      'IBM Plex Mono', monospace;
     --sans:      'IBM Plex Sans', sans-serif;
@@ -30,245 +30,164 @@
     font-family: var(--sans);
     font-size: 14px;
     min-height: 100vh;
-    padding: 32px 24px 64px;
+    padding: 0;
   }
 
-  /* scanline overlay */
   body::before {
     content: '';
     position: fixed; inset: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.08) 2px,
-      rgba(0,0,0,0.08) 4px
-    );
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px);
     pointer-events: none;
     z-index: 1000;
   }
 
-  .wrap { max-width: 860px; margin: 0 auto; }
-
-  /* ── Header ── */
-  header { margin-bottom: 36px; }
-  .logo {
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.25em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 8px;
-  }
-  h1 {
-    font-family: var(--mono);
-    font-size: 28px;
-    font-weight: 600;
-    color: var(--text-head);
-    letter-spacing: -0.02em;
-  }
-  h1 span { color: var(--accent); }
-  .subtitle {
-    margin-top: 6px;
-    color: var(--text-dim);
-    font-size: 13px;
-    font-weight: 300;
-  }
-
-  /* ── Panels ── */
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 24px;
-    margin-bottom: 20px;
-  }
-  .panel-title {
-    font-family: var(--mono);
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin-bottom: 18px;
+  /* ── Page tabs ── */
+  .page-tabs {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    padding: 0 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
   }
-  .panel-title::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border);
-  }
-
-  /* ── Drop zone ── */
-  #dropzone {
-    border: 2px dashed var(--border2);
-    border-radius: 6px;
-    padding: 40px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    position: relative;
-  }
-  #dropzone:hover, #dropzone.over {
-    border-color: var(--accent);
-    background: rgba(0,212,255,0.04);
-  }
-  #dropzone input[type=file] {
-    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-  }
-  .drop-icon {
-    font-size: 32px;
-    margin-bottom: 12px;
-    display: block;
-  }
-  .drop-label {
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--text-dim);
-  }
-  .drop-label strong { color: var(--accent); font-weight: 500; }
-  #file-name {
-    margin-top: 10px;
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--accent2);
-    min-height: 18px;
-  }
-
-  /* ── Scalars grid ── */
-  .scalars-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
-  @media (max-width: 520px) { .scalars-grid { grid-template-columns: 1fr; } }
-
-  .scalar-field label {
-    display: block;
+  .page-tab {
     font-family: var(--mono);
     font-size: 11px;
-    letter-spacing: 0.1em;
-    color: var(--text-dim);
-    margin-bottom: 6px;
-    text-transform: uppercase;
-  }
-  .scalar-field label span {
-    color: var(--accent);
-    margin-right: 4px;
-  }
-  .scalar-field input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border2);
-    border-radius: 4px;
-    color: var(--text-head);
-    font-family: var(--mono);
-    font-size: 14px;
-    padding: 8px 12px;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-  .scalar-field input:focus { border-color: var(--accent); }
-  .scalar-field input::placeholder { color: var(--text-dim); }
-
-  /* ── Run button ── */
-  #run-btn {
-    display: block;
-    width: 100%;
-    margin-top: 4px;
-    padding: 13px;
-    background: var(--accent);
-    color: #000;
-    border: none;
-    border-radius: 4px;
-    font-family: var(--mono);
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: background 0.15s, transform 0.1s;
-  }
-  #run-btn:hover { background: #33ddff; }
-  #run-btn:active { transform: scale(0.99); }
-  #run-btn:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
-
-  /* ── Results ── */
-  #results { display: none; }
-
-  .section-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin-bottom: 12px;
-    display: flex; align-items: center; gap: 10px;
-  }
-  .section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: var(--mono);
-    font-size: 13px;
-  }
-  thead tr { border-bottom: 1px solid var(--border2); }
-  th {
-    text-align: left;
-    padding: 8px 10px;
-    font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-dim);
+    padding: 14px 20px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+    user-select: none;
   }
+  .page-tab:hover { color: var(--text); }
+  .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Page content ── */
+  .page { display: none; padding: 32px 24px 64px; }
+  .page.active { display: block; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ── Header ── */
+  header { margin-bottom: 36px; }
+  .logo { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.25em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+  h1 { font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--text-head); letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .subtitle { margin-top: 6px; color: var(--text-dim); font-size: 13px; font-weight: 300; }
+
+  /* ── Panels ── */
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 24px; margin-bottom: 20px; }
+  .panel-title { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
+  .panel-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* ── Drop zone ── */
+  #dropzone { border: 2px dashed var(--border2); border-radius: 6px; padding: 40px 24px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; position: relative; }
+  #dropzone:hover, #dropzone.over { border-color: var(--accent); background: rgba(0,212,255,0.04); }
+  #dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { font-size: 32px; margin-bottom: 12px; display: block; }
+  .drop-label { font-family: var(--mono); font-size: 13px; color: var(--text-dim); }
+  .drop-label strong { color: var(--accent); font-weight: 500; }
+  #file-name { margin-top: 10px; font-family: var(--mono); font-size: 12px; color: var(--accent2); min-height: 18px; }
+
+  /* ── Scalars ── */
+  .scalars-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 520px) { .scalars-grid { grid-template-columns: 1fr; } }
+  .scalar-field label { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; }
+  .scalar-field label span { color: var(--accent); margin-right: 4px; }
+  .scalar-field input { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 4px; color: var(--text-head); font-family: var(--mono); font-size: 14px; padding: 8px 12px; outline: none; transition: border-color 0.15s; }
+  .scalar-field input:focus { border-color: var(--accent); }
+  .scalar-field input::placeholder { color: var(--text-dim); }
+  .scalar-slider { width: 100%; margin-top: 7px; accent-color: var(--accent); cursor: pointer; height: 4px; display: block; }
+  .slider-max { width: 52px; background: var(--bg); border: 1px solid var(--border2); border-radius: 4px; color: var(--text-head); font-family: var(--mono); font-size: 12px; padding: 4px 6px; outline: none; text-align: center; transition: border-color 0.15s; }
+  .slider-max:focus { border-color: var(--accent); }
+
+  /* ── Run button ── */
+  #run-btn { display: block; width: 100%; margin-top: 4px; padding: 13px; background: var(--accent); color: #000; border: none; border-radius: 4px; font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+  #run-btn:hover { background: #33ddff; }
+  #run-btn:active { transform: scale(0.99); }
+  #run-btn:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+
+  /* ── Results tables ── */
+  #results { display: none; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
+  thead tr { border-bottom: 1px solid var(--border2); }
+  th { text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
   th:not(:first-child) { text-align: right; }
-  td {
-    padding: 9px 10px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-  }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
   td:not(:first-child) { text-align: right; color: var(--text-head); }
   tr:last-child td { border-bottom: none; }
   tbody tr:hover td { background: rgba(255,255,255,0.02); }
-
   .ch-name { color: var(--text-dim); }
   .val-accent { color: var(--accent) !important; }
   .val-green  { color: var(--accent2) !important; }
   .val-warn   { color: var(--warn) !important; }
-
   .results-block { margin-bottom: 28px; }
+  #tbl-ptfe th, #tbl-ptfe td { text-align: center !important; }
+  #tbl-ptfe td { font-size: 13px; padding: 12px 10px; }
+  #tbl-ptfe th { font-size: 12px; padding: 10px; font-weight: 700; color: #ffffff; letter-spacing: 0.05em; }
+  .ptfe-title { color: #ffffff !important; font-weight: 700 !important; }
+  .error-msg { font-family: var(--mono); font-size: 12px; color: #ff5555; background: rgba(255,85,85,0.08); border: 1px solid rgba(255,85,85,0.2); border-radius: 4px; padding: 10px 14px; margin-top: 10px; }
+  .lut-sel-btn { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; padding: 8px 18px; border-radius: 4px; border: 1px solid var(--border2); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  .lut-sel-btn:hover { border-color: var(--accent); color: var(--text); }
+  .lut-sel-btn.active { background: rgba(0,212,255,0.1); border-color: var(--accent); color: var(--accent); }
 
-  .scalar-tag {
-    display: inline-block;
+  /* ── LUT page ── */
+  .lut-header { margin-bottom: 28px; }
+  .lut-tabs { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+  .lut-tab {
     font-family: var(--mono);
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 3px;
-    background: rgba(0,212,255,0.1);
-    color: var(--accent);
-    margin-left: 8px;
-    vertical-align: middle;
-  }
-
-  .error-msg {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: #ff5555;
-    background: rgba(255,85,85,0.08);
-    border: 1px solid rgba(255,85,85,0.2);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 8px 18px;
     border-radius: 4px;
-    padding: 10px 14px;
-    margin-top: 10px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
   }
+  .lut-tab:hover { border-color: var(--accent); color: var(--text); }
+  .lut-tab.active { background: rgba(0,212,255,0.1); border-color: var(--accent); color: var(--accent); }
+
+  .lut-panel { display: none; }
+  .lut-panel.active { display: block; }
+
+  .lut-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: rgba(0,212,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .lut-meta span { color: var(--accent); }
+
+  .lut-table th:not(:first-child) { text-align: right; }
+  .lut-table td:not(:first-child) { text-align: right; }
+  .lut-sc { color: var(--accent) !important; font-weight: 500; }
 </style>
 </head>
 <body>
+
+<!-- ── Page tabs ── -->
+<div class="page-tabs">
+  <div class="page-tab active" data-page="analysis">Analysis</div>
+  <div class="page-tab" data-page="lut">Look Up Table (LUT)</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE 1 — Analysis
+     ══════════════════════════════════════════════════════════════ -->
+<div class="page active" id="page-analysis">
 <div class="wrap">
 
   <header>
@@ -277,7 +196,6 @@
     <div class="subtitle">Average · Dark-subtract · PTFE-normalize</div>
   </header>
 
-  <!-- File picker -->
   <div class="panel">
     <div class="panel-title">01 — Load CSV</div>
     <div id="dropzone">
@@ -289,101 +207,326 @@
     <div id="load-error"></div>
   </div>
 
-  <!-- Scalars -->
-  <div class="panel">
-    <div class="panel-title">02 — Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(leave blank for 1.0)</span></div>
-    <div class="scalars-grid">
-      <div class="scalar-field">
-        <label><span>D</span>Dark Voltage</label>
-        <input type="number" id="s0" step="any" placeholder="1.0">
-      </div>
-      <div class="scalar-field">
-        <label><span>CH1</span>1450 4.5 mm</label>
-        <input type="number" id="s1" step="any" placeholder="1.0">
-      </div>
-      <div class="scalar-field">
-        <label><span>CH2</span>1650 7.0 mm</label>
-        <input type="number" id="s2" step="any" placeholder="1.0">
-      </div>
-      <div class="scalar-field">
-        <label><span>CH3</span>1450 7.0 mm</label>
-        <input type="number" id="s3" step="any" placeholder="1.0">
-      </div>
-      <div class="scalar-field">
-        <label><span>CH4</span>1650 4.5 mm</label>
-        <input type="number" id="s4" step="any" placeholder="1.0">
+  <div id="results">
+    <div class="panel results-block" style="margin-top:20px;">
+      <div class="panel-title">Raw Averages</div>
+      <table id="tbl-raw"><thead><tr><th>Channel</th><th>Scalar</th><th>Average (V)</th><th>Rows Used</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel results-block">
+      <div class="panel-title">Dark-Subtracted Averages</div>
+      <table id="tbl-dark"><thead><tr><th>Channel</th><th>Average (V)</th><th>Dark Avg (V)</th><th>Dark Sub (V)</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel results-block">
+      <div class="panel-title ptfe-title">PTFE Normalized</div>
+      <table id="tbl-ptfe">
+        <thead>
+          <tr>
+            <th>1450 4.5 mm</th>
+            <th>1650 7.0 mm</th>
+            <th>1450 7.0 mm</th>
+            <th>1650 4.5 mm</th>
+          </tr>
+        </thead>
+        <tbody><tr id="ptfe-row"><td>—</td><td>—</td><td>—</td><td>—</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel results-block">
+      <div class="panel-title" style="color:#fff;font-weight:700;">Ratios and Recovered Scattering</div>
+
+      <div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;">
+
+        <!-- Left: selector + ratios table -->
+        <div style="flex:0 0 auto;min-width:340px;">
+          <div style="margin-bottom:18px;">
+            <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">Select Gel LUT</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;" id="lut-selector">
+              <button class="lut-sel-btn active" data-lut="0">70%</button>
+              <button class="lut-sel-btn" data-lut="1">73.68%</button>
+              <button class="lut-sel-btn" data-lut="2">75%</button>
+              <button class="lut-sel-btn" data-lut="3">80%</button>
+            </div>
+          </div>
+
+          <table id="tbl-ratios" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
+            <thead>
+              <tr>
+                <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">1450 Far/Close</th>
+                <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">1650 Far/Close</th>
+                <th style="text-align:center;padding:8px 10px;font-size:12px;font-weight:700;color:#ffffff;border-bottom:1px solid var(--border2);">1450 Scattering</th>
+                <th style="text-align:center;padding:8px 10px;font-size:12px;font-weight:700;color:#ffffff;border-bottom:1px solid var(--border2);">1650 Scattering</th>
+              </tr>
+            </thead>
+            <tbody><tr id="ratios-row">
+              <td style="text-align:center;padding:12px 10px;color:var(--text);">—</td>
+              <td style="text-align:center;padding:12px 10px;color:var(--text);">—</td>
+              <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:var(--accent);">—</td>
+              <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:var(--accent);">—</td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <!-- Right: inline LUT preview -->
+        <div style="flex:1;min-width:280px;">
+          <div id="inline-lut-title" style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;">LUT — 70%</div>
+          <table id="tbl-inline-lut" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+            <thead>
+              <tr>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Reduced Scattering</th>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Ratio Far/Close 1450</th>
+                <th style="text-align:center;padding:6px 8px;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border2);">Ratio Far/Close 1650</th>
+              </tr>
+            </thead>
+            <tbody id="inline-lut-body"></tbody>
+          </table>
+        </div>
+
       </div>
     </div>
   </div>
 
-  <!-- Run -->
+  <div class="panel" style="margin-top:20px;">
+    <div style="display:flex;gap:20px;align-items:flex-start;">
+
+      <!-- Scalars -->
+      <div style="flex:1;">
+        <div class="panel-title">02 — Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(leave blank for 1.0)</span></div>
+        <div class="scalars-grid">
+          <div class="scalar-field"><label><span>D</span>Dark Voltage</label><input type="number" id="s0" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl0" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH1</span>1450 4.5 mm</label><input type="number" id="s1" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl1" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH2</span>1650 7.0 mm</label><input type="number" id="s2" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl2" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH3</span>1450 7.0 mm</label><input type="number" id="s3" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl3" min="0" max="1" step="0.001" value="1"></div>
+          <div class="scalar-field"><label><span>CH4</span>1650 4.5 mm</label><input type="number" id="s4" step="0.001" placeholder="1.0"><input type="range" class="scalar-slider" id="sl4" min="0" max="1" step="0.001" value="1"></div>
+        </div>
+      </div>
+
+      <!-- Max Range -->
+      <div style="flex:0 0 auto;min-width:110px;border-left:1px solid var(--border);padding-left:18px;">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:14px;">Max Range</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">D</span><input type="number" class="slider-max" id="mx0" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH1</span><input type="number" class="slider-max" id="mx1" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH2</span><input type="number" class="slider-max" id="mx2" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH3</span><input type="number" class="slider-max" id="mx3" value="1" step="any"></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:11px;color:var(--accent);width:32px;">CH4</span><input type="number" class="slider-max" id="mx4" value="1" step="any"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <button id="run-btn" disabled>▶ &nbsp; Run Analysis</button>
 
-  <!-- Results -->
-  <div id="results">
-
-    <!-- Raw averages -->
-    <div class="panel results-block">
-      <div class="panel-title">Raw Averages</div>
-      <table id="tbl-raw">
-        <thead>
-          <tr>
-            <th>Channel</th>
-            <th>Scalar</th>
-            <th>Average (V)</th>
-            <th>Rows Used</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+  <div class="panel" style="margin-top:20px;" id="reverse-panel">
+    <div class="panel-title">03 — Reverse Engineer Scalars <span style="color:var(--text-dim);font-size:10px;margin-left:6px;">(scalar = target ÷ raw average)</span></div>
+    <div class="scalars-grid">
+      <div class="scalar-field"><label><span>D</span>Dark Voltage</label><input type="number" id="t0" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH1</span>1450 4.5 mm</label><input type="number" id="t1" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH2</span>1650 7.0 mm</label><input type="number" id="t2" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH3</span>1450 7.0 mm</label><input type="number" id="t3" step="any" placeholder="target value"></div>
+      <div class="scalar-field"><label><span>CH4</span>1650 4.5 mm</label><input type="number" id="t4" step="any" placeholder="target value"></div>
     </div>
+    <button id="reverse-btn" style="display:block;width:100%;margin-top:16px;padding:11px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;cursor:pointer;transition:background 0.15s,color 0.15s;" disabled>⟵ &nbsp; Calculate Scalars</button>
+    <div id="reverse-error" style="margin-top:10px;"></div>
+  </div>
 
-    <!-- Dark subtracted -->
-    <div class="panel results-block">
-      <div class="panel-title">Dark-Subtracted Averages</div>
-      <table id="tbl-dark">
-        <thead>
-          <tr>
-            <th>Channel</th>
-            <th>Average (V)</th>
-            <th>Dark Avg (V)</th>
-            <th>Dark Sub (V)</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE 2 — Look Up Table
+     ══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-lut">
+<div class="wrap">
+
+  <header class="lut-header">
+    <div class="logo">Sensor Analysis Toolkit</div>
+    <h1>Look Up <span>Tables</span></h1>
+    <div class="subtitle">Scattering coefficient · Ratio Far/Close 1450 · Ratio Far/Close 1650</div>
+  </header>
+
+  <!-- LUT sub-tabs -->
+  <div class="lut-tabs">
+    <button class="lut-tab active" data-lut="0">70%</button>
+    <button class="lut-tab" data-lut="1">73.68%</button>
+    <button class="lut-tab" data-lut="2">75%</button>
+    <button class="lut-tab" data-lut="3">80%</button>
+  </div>
+
+  <!-- LUT 70% -->
+  <div class="lut-panel active" id="lut-panel-0">
+    <div class="panel">
+      <div class="panel-title">LUT — 70% Added Water</div>
+      <div class="lut-meta">true total f<sub>w</sub> = <span>0.7800</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+      <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead>
+      <tbody id="lut-body-0"></tbody></table>
     </div>
+  </div>
 
-    <!-- PTFE normalized -->
-    <div class="panel results-block">
-      <div class="panel-title">PTFE Normalized</div>
-      <table id="tbl-ptfe">
-        <thead>
-          <tr>
-            <th>Channel</th>
-            <th>Dark Sub (V)</th>
-            <th>PTFE Ref</th>
-            <th>Normalized</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+  <!-- LUT 73.68% -->
+  <div class="lut-panel" id="lut-panel-1">
+    <div class="panel">
+      <div class="panel-title">LUT — 73.68% Added Water</div>
+      <div class="lut-meta">true total f<sub>w</sub> = <span>0.8168</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+      <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead>
+      <tbody id="lut-body-1"></tbody></table>
     </div>
+  </div>
 
-  </div><!-- /results -->
+  <!-- LUT 75% -->
+  <div class="lut-panel" id="lut-panel-2">
+    <div class="panel">
+      <div class="panel-title">LUT — 75% Added Water</div>
+      <div class="lut-meta">true total f<sub>w</sub> = <span>0.8300</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+      <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead>
+      <tbody id="lut-body-2"></tbody></table>
+    </div>
+  </div>
 
-</div><!-- /wrap -->
+  <!-- LUT 80% -->
+  <div class="lut-panel" id="lut-panel-3">
+    <div class="panel">
+      <div class="panel-title">LUT — 80% Added Water</div>
+      <div class="lut-meta">true total f<sub>w</sub> = <span>0.8800</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
+      <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead>
+      <tbody id="lut-body-3"></tbody></table>
+    </div>
+  </div>
+
+</div>
+</div>
 
 <script>
-// ── Constants ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// LUT DATA — stored in memory
+// Each row: [scattering_coeff, ratio_far_close_1450, ratio_far_close_1650]
+// ═══════════════════════════════════════════════════════════════
+const LUTS = [
+  // 70%
+  {
+    label: "70%",
+    fw: "0.7800",
+    rows: [
+      [0.5,  0.0503581930312419,  0.268654915063907],
+      [1.0,  0.0223961291025212,  0.265619877163664],
+      [2.0,  0.00675849769919975, 0.238911098838800],
+      [3.0,  0.0030876600827986,  0.199482224101476],
+      [5.0,  0.00120533336655527, 0.133906195821686],
+      [7.0,  0.000598694098497652,0.0922081056694977],
+      [10.0, 0.000246436874842456,0.0562600956051529],
+      [15.0, 8.19648112770466e-5, 0.0280400090603366],
+      [20.0, 2.75676177667094e-5, 0.015033749663345],
+      [25.0, 1.11065820937462e-5, 0.00893414360111323],
+      [30.0, 0,                   0.00550245626473164],
+    ]
+  },
+  // 73.68%
+  {
+    label: "73.68%",
+    fw: "0.8168",
+    rows: [
+      [0.5,  0.04780343,    0.2584382],
+      [1.0,  0.0211923,     0.2550018],
+      [2.0,  0.006005975,   0.2279702],
+      [3.0,  0.002544583,   0.1897627],
+      [5.0,  0.0009361549,  0.1269523],
+      [7.0,  0.0004517797,  0.08662391],
+      [10.0, 0.0001866874,  0.05242532],
+      [15.0, 5.464973e-5,   0.02560226],
+      [20.0, 1.755784e-5,   0.01367261],
+      [25.0, 1.689196e-6,   0.007987429],
+      [30.0, 0,             0.004853203],
+    ]
+  },
+  // 75%
+  {
+    label: "75%",
+    fw: "0.8300",
+    rows: [
+      [0.5,  0.04691898,    0.254869],
+      [1.0,  0.02077645,    0.2512975],
+      [2.0,  0.005756975,   0.2241691],
+      [3.0,  0.002374005,   0.1863929],
+      [5.0,  0.0008550223,  0.124547],
+      [7.0,  0.0004083815,  0.08470439],
+      [10.0, 0.0001689894,  0.05111445],
+      [15.0, 4.725453e-5,   0.02478049],
+      [20.0, 1.493456e-5,   0.01321501],
+      [25.0, 8.596124e-7,   0.007672871],
+      [30.0, 0,             0.004639481],
+    ]
+  },
+  // 80%
+  {
+    label: "80%",
+    fw: "0.8800",
+    rows: [
+      [0.5,  0.04371464,    0.2417906],
+      [1.0,  0.0192739,     0.2377475],
+      [2.0,  0.004903865,   0.2103367],
+      [3.0,  0.001825298,   0.1741625],
+      [5.0,  0.0006065237,  0.1158419],
+      [7.0,  0.0002785654,  0.07781135],
+      [10.0, 0.0001158814,  0.04643944],
+      [15.0, 2.724329e-5,   0.02189988],
+      [20.0, 8.09069e-6,    0.0116163],
+      [25.0, 0,             0.006589658],
+      [30.0, 0,             0.00391185],
+    ]
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// Populate LUT tables on load
+// ═══════════════════════════════════════════════════════════════
+LUTS.forEach((lut, i) => {
+  const tbody = document.getElementById(`lut-body-${i}`);
+  lut.rows.forEach(([sc, r1450, r1650]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="lut-sc">${sc}</td>
+      <td>${r1450.toFixed(9)}</td>
+      <td>${r1650.toFixed(9)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+});
+
+// ── Page tab switching ────────────────────────────────────────
+renderInlineLut(0);
+// ═══════════════════════════════════════════════════════════════
+document.querySelectorAll('.page-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// LUT sub-tab switching
+// ═══════════════════════════════════════════════════════════════
+document.querySelectorAll('.lut-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.lut-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.lut-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('lut-panel-' + tab.dataset.lut).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Analysis — constants
+// ═══════════════════════════════════════════════════════════════
 const CHANNEL_COLS  = ['dark_V', 'CH1_V', 'CH2_V', 'CH3_V', 'CH4_V'];
 const CHANNEL_NAMES = ['Dark Voltage', '1450 4.5 mm', '1650 7.0 mm', '1450 7.0 mm', '1650 4.5 mm'];
 const PTFE = [9.176146663, 5.255547687, 6.634385111, 8.759144989];
 
-// ── State ────────────────────────────────────────────────────────────────────
-let rawData = null; // array of rows, each row = array of 5 floats (or NaN)
+let rawData = null;
+let rawAverages = null; // unscaled averages, stored after each run
 
-// ── File handling ─────────────────────────────────────────────────────────────
+// ── File handling ─────────────────────────────────────────────
 const dropzone  = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-input');
 const fileName  = document.getElementById('file-name');
@@ -392,31 +535,15 @@ const runBtn    = document.getElementById('run-btn');
 
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
-dropzone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropzone.classList.remove('over');
-  const file = e.dataTransfer.files[0];
-  if (file) loadFile(file);
-});
-fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) loadFile(fileInput.files[0]);
-});
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
 
 function loadFile(file) {
-  loadError.innerHTML = '';
-  fileName.textContent = '';
-  rawData = null;
-  runBtn.disabled = true;
-
+  loadError.innerHTML = ''; fileName.textContent = ''; rawData = null; runBtn.disabled = true;
   const reader = new FileReader();
   reader.onload = e => {
-    try {
-      rawData = parseCSV(e.target.result);
-      fileName.textContent = `✓  ${file.name}  —  ${rawData.length} data rows loaded`;
-      runBtn.disabled = false;
-    } catch(err) {
-      loadError.innerHTML = `<div class="error-msg">⚠ ${err.message}</div>`;
-    }
+    try { rawData = parseCSV(e.target.result); fileName.textContent = `✓  ${file.name}  —  ${rawData.length} data rows loaded`; runBtn.disabled = false; }
+    catch(err) { loadError.innerHTML = `<div class="error-msg">⚠ ${err.message}</div>`; }
   };
   reader.readAsText(file);
 }
@@ -424,47 +551,57 @@ function loadFile(file) {
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
   if (lines.length < 2) throw new Error('File has no data rows.');
-
   const headers = lines[0].split(',').map(h => h.trim());
-
-  // Find column indices
-  const chIdx = CHANNEL_COLS.map(col => {
-    const i = headers.indexOf(col);
-    if (i === -1) throw new Error(`Column "${col}" not found in header.`);
-    return i;
-  });
-
-  const rows = [];
-  for (let r = 1; r < lines.length; r++) {
-    const cells = lines[r].split(',');
-    const row = chIdx.map(idx => {
-      const v = parseFloat(cells[idx]);
-      return isNaN(v) ? NaN : v;
-    });
-    rows.push(row);
-  }
-  return rows;
+  const chIdx = CHANNEL_COLS.map(col => { const i = headers.indexOf(col); if (i === -1) throw new Error(`Column "${col}" not found in header.`); return i; });
+  return lines.slice(1).map(line => { const cells = line.split(','); return chIdx.map(idx => { const v = parseFloat(cells[idx]); return isNaN(v) ? NaN : v; }); });
 }
 
-// ── Analysis ─────────────────────────────────────────────────────────────────
-runBtn.addEventListener('click', () => {
-  if (!rawData) return;
+// ── Run analysis ──────────────────────────────────────────────
+// ── Slider <-> number input sync + live run ───────────────────
+for (let i = 0; i < 5; i++) {
+  const num = document.getElementById('s' + i);
+  const sld = document.getElementById('sl' + i);
+  const mx  = document.getElementById('mx' + i);
 
-  const scalars = [0,1,2,3,4].map(i => {
-    const v = parseFloat(document.getElementById('s' + i).value);
-    return isNaN(v) ? 1.0 : v;
+  mx.addEventListener('change', () => {
+    const m = parseFloat(mx.value);
+    if (!isNaN(m) && m > 0) {
+      sld.max = m;
+      // clamp slider if current value exceeds new max
+      if (parseFloat(sld.value) > m) sld.value = m;
+    }
   });
 
-  const sums    = new Array(5).fill(0);
-  const counts  = new Array(5).fill(0);
-  const skipped = new Array(5).fill(0);
+  num.addEventListener('input', () => {
+    const v = parseFloat(num.value);
+    if (!isNaN(v) && v >= 0 && v <= parseFloat(sld.max)) sld.value = v;
+    if (rawData) runAnalysis();
+  });
 
+  sld.addEventListener('input', () => {
+    num.value = parseFloat(sld.value).toFixed(3);
+    if (rawData) runAnalysis();
+  });
+}
+
+function runAnalysis() {
+  if (!rawData) return;
+  const scalars = [0,1,2,3,4].map(i => { const v = parseFloat(document.getElementById('s' + i).value); return isNaN(v) ? 1.0 : v; });
+  const sums = new Array(5).fill(0), counts = new Array(5).fill(0), skipped = new Array(5).fill(0);
   for (const row of rawData) {
     for (let c = 0; c < 5; c++) {
-      if (isNaN(row[c])) { skipped[c]++; }
-      else { sums[c] += row[c] * scalars[c]; counts[c]++; }
+      if (isNaN(row[c])) skipped[c]++; else { sums[c] += row[c] * scalars[c]; counts[c]++; }
     }
   }
+  // Compute unscaled averages for reverse engineering
+  const unscaledSums = new Array(5).fill(0), unscaledCounts = new Array(5).fill(0);
+  for (const row of rawData) {
+    for (let c = 0; c < 5; c++) {
+      if (!isNaN(row[c])) { unscaledSums[c] += row[c]; unscaledCounts[c]++; }
+    }
+  }
+  rawAverages = unscaledCounts.map((n, c) => n > 0 ? unscaledSums[c] / n : NaN);
+  document.getElementById('reverse-btn').disabled = false;
 
   const averages = counts.map((n, c) => n > 0 ? sums[c] / n : NaN);
   const darkAvg  = averages[0];
@@ -472,54 +609,139 @@ runBtn.addEventListener('click', () => {
   const ptfe     = darkSub.map((v, i) => v / PTFE[i]);
   const total    = rawData.length;
 
-  // ── Table 1: Raw averages ──────────────────────────────
-  const tbody1 = document.querySelector('#tbl-raw tbody');
-  tbody1.innerHTML = '';
+  const tbody1 = document.querySelector('#tbl-raw tbody'); tbody1.innerHTML = '';
   for (let c = 0; c < 5; c++) {
     const row = document.createElement('tr');
-    row.innerHTML = `
-      <td class="ch-name">${CHANNEL_NAMES[c]}</td>
-      <td class="${scalars[c] !== 1.0 ? 'val-warn' : ''}">${scalars[c].toFixed(4)}</td>
-      <td class="val-accent">${fmt(averages[c], 6)}</td>
-      <td style="color:var(--text-dim)">${counts[c]}/${total}${skipped[c] ? ` <span style="color:#ff5555">(${skipped[c]} skipped)</span>` : ''}</td>
-    `;
+    row.innerHTML = `<td class="ch-name">${CHANNEL_NAMES[c]}</td><td class="${scalars[c] !== 1.0 ? 'val-warn' : ''}">${scalars[c].toFixed(4)}</td><td class="val-accent">${fmt(averages[c],6)}</td><td style="color:var(--text-dim)">${counts[c]}/${total}${skipped[c]?` <span style="color:#ff5555">(${skipped[c]} skipped)</span>`:''}</td>`;
     tbody1.appendChild(row);
   }
 
-  // ── Table 2: Dark subtracted ───────────────────────────
-  const tbody2 = document.querySelector('#tbl-dark tbody');
-  tbody2.innerHTML = '';
+  const tbody2 = document.querySelector('#tbl-dark tbody'); tbody2.innerHTML = '';
   for (let c = 0; c < 4; c++) {
     const row = document.createElement('tr');
-    row.innerHTML = `
-      <td class="ch-name">${CHANNEL_NAMES[c + 1]}</td>
-      <td>${fmt(averages[c + 1], 6)}</td>
-      <td style="color:var(--text-dim)">${fmt(darkAvg, 6)}</td>
-      <td class="${darkSub[c] < 0 ? 'val-warn' : 'val-accent'}">${fmt(darkSub[c], 6)}</td>
-    `;
+    row.innerHTML = `<td class="ch-name">${CHANNEL_NAMES[c+1]}</td><td>${fmt(averages[c+1],6)}</td><td style="color:var(--text-dim)">${fmt(darkAvg,6)}</td><td class="${darkSub[c]<0?'val-warn':'val-accent'}">${fmt(darkSub[c],6)}</td>`;
     tbody2.appendChild(row);
   }
 
-  // ── Table 3: PTFE normalized ───────────────────────────
-  const tbody3 = document.querySelector('#tbl-ptfe tbody');
-  tbody3.innerHTML = '';
-  for (let c = 0; c < 4; c++) {
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td class="ch-name">${CHANNEL_NAMES[c + 1]}</td>
-      <td>${fmt(darkSub[c], 6)}</td>
-      <td style="color:var(--text-dim)">${PTFE[c].toFixed(9)}</td>
-      <td class="val-green">${fmt(ptfe[c], 9)}</td>
-    `;
-    tbody3.appendChild(row);
-  }
+  const ptfeRow = document.getElementById('ptfe-row');
+  ptfeRow.innerHTML = ptfe.map(v => {
+    const cls = (isNaN(v) || v < 0 || v > 1) ? 'val-warn' : 'val-green';
+    return `<td class="${cls}" style="font-weight:700;font-size:14px;">${fmt(v, 9)}</td>`;
+  }).join('');
+
+  lastPtfe = ptfe;
+  updateRatios(ptfe);
 
   document.getElementById('results').style.display = 'block';
-  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+runBtn.addEventListener('click', runAnalysis);
+
+// ── Reverse engineer scalars ───────────────────────────────────
+const reverseBtn = document.getElementById('reverse-btn');
+reverseBtn.addEventListener('mouseenter', () => { reverseBtn.style.background = 'rgba(0,212,255,0.1)'; });
+reverseBtn.addEventListener('mouseleave', () => { reverseBtn.style.background = 'transparent'; });
+
+reverseBtn.addEventListener('click', () => {
+  if (!rawAverages) return;
+  const errEl = document.getElementById('reverse-error');
+  errEl.innerHTML = '';
+  let anySet = false;
+
+  for (let i = 0; i < 5; i++) {
+    const target = parseFloat(document.getElementById('t' + i).value);
+    if (isNaN(target)) continue; // skip blanks
+
+    const raw = rawAverages[i];
+    if (isNaN(raw) || raw === 0) {
+      errEl.innerHTML = `<div class="error-msg">⚠ Cannot compute scalar for channel ${i} — raw average is zero or missing.</div>`;
+      continue;
+    }
+
+    const scalar = target / raw;
+    const numInput = document.getElementById('s' + i);
+    const sldInput = document.getElementById('sl' + i);
+    const mxInput  = document.getElementById('mx' + i);
+
+    numInput.value = scalar.toFixed(6);
+
+    // Expand slider max if needed
+    const currentMax = parseFloat(mxInput.value);
+    if (scalar > currentMax) {
+      mxInput.value = Math.ceil(scalar * 1.2);
+      sldInput.max  = mxInput.value;
+    }
+    sldInput.value = Math.min(scalar, parseFloat(sldInput.max));
+    anySet = true;
+  }
+
+  if (anySet && rawData) runAnalysis();
 });
 
-function fmt(v, dec) {
-  return isNaN(v) ? '—' : v.toFixed(dec);
+function fmt(v, dec) { return isNaN(v) ? '—' : v.toFixed(dec); }
+
+function renderInlineLut(lutIdx) {
+  const lut = LUTS[lutIdx];
+  document.getElementById('inline-lut-title').textContent = `LUT — ${lut.label}`;
+  const tbody = document.getElementById('inline-lut-body');
+  tbody.innerHTML = '';
+  lut.rows.forEach(([sc, r1450, r1650]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--accent);font-weight:500;">${sc}</td>
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text);">${r1450.toFixed(9)}</td>
+      <td style="text-align:center;padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text);">${r1650.toFixed(9)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── LUT selector ──────────────────────────────────────────────
+let selectedLut = 0;
+let lastPtfe = null;
+
+document.querySelectorAll('.lut-sel-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lut-sel-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedLut = parseInt(btn.dataset.lut);
+    renderInlineLut(selectedLut);
+    if (lastPtfe) updateRatios(lastPtfe);
+  });
+});
+
+function logLinearInterp(lut, targetRatio, colIdx) {
+  // colIdx: 1 = Ratio Far/Close 1450, 2 = Ratio Far/Close 1650
+  const rows = lut.rows;
+  // Find bracketing rows (ratios decrease as sc increases)
+  for (let i = 0; i < rows.length - 1; i++) {
+    const y1 = rows[i][colIdx], y2 = rows[i+1][colIdx];
+    const x1 = rows[i][0],     x2 = rows[i+1][0];
+    if (targetRatio <= y1 && targetRatio >= y2) {
+      if (y1 <= 0 || y2 <= 0 || targetRatio <= 0) return NaN;
+      return x1 + (x2 - x1) * (Math.log(targetRatio) - Math.log(y1)) / (Math.log(y2) - Math.log(y1));
+    }
+  }
+  return NaN; // out of range
+}
+
+function updateRatios(ptfe) {
+  // ptfe = [1450 4.5mm, 1650 7.0mm, 1450 7.0mm, 1650 4.5mm]
+  const ratio1450 = ptfe[2] / ptfe[0]; // far(7mm) / close(4.5mm) for 1450
+  const ratio1650 = ptfe[1] / ptfe[3]; // far(7mm) / close(4.5mm) for 1650
+
+  const lut = LUTS[selectedLut];
+  const sc1450 = logLinearInterp(lut, ratio1450, 1);
+  const sc1650 = logLinearInterp(lut, ratio1650, 2);
+
+  const row = document.getElementById('ratios-row');
+  const scColor = v => isNaN(v) ? '#ff5555' : 'var(--accent)';
+  row.innerHTML = `
+    <td style="text-align:center;padding:12px 10px;color:var(--text);">${fmt(ratio1450, 9)}</td>
+    <td style="text-align:center;padding:12px 10px;color:var(--text);">${fmt(ratio1650, 9)}</td>
+    <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:${scColor(sc1450)};">${fmt(sc1450, 6)}</td>
+    <td style="text-align:center;padding:12px 10px;font-weight:700;font-size:14px;color:${scColor(sc1650)};">${fmt(sc1650, 6)}</td>
+  `;
 }
 </script>
 </body>
