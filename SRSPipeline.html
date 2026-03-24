@@ -423,6 +423,10 @@
               <button class="lut-sel-btn" data-lut="1">73.68%</button>
               <button class="lut-sel-btn" data-lut="2">75%</button>
               <button class="lut-sel-btn" data-lut="3">80%</button>
+              <button class="lut-sel-btn" data-lut="4">AW 76%</button>
+              <button class="lut-sel-btn" data-lut="5">AW 77%</button>
+              <button class="lut-sel-btn" data-lut="6">AW 78%</button>
+              <button class="lut-sel-btn" data-lut="7">AW 79%</button>
             </div>
           </div>
           <table id="tbl-ratios" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
@@ -533,6 +537,10 @@
     <button class="lut-tab" data-lut="1">73.68%</button>
     <button class="lut-tab" data-lut="2">75%</button>
     <button class="lut-tab" data-lut="3">80%</button>
+    <button class="lut-tab" data-lut="4">AW 76%</button>
+    <button class="lut-tab" data-lut="5">AW 77%</button>
+    <button class="lut-tab" data-lut="6">AW 78%</button>
+    <button class="lut-tab" data-lut="7">AW 79%</button>
   </div>
   <div class="lut-panel active" id="lut-panel-0">
     <div class="panel"><div class="panel-title">LUT — 70% Added Water</div>
@@ -553,6 +561,26 @@
     <div class="panel"><div class="panel-title">LUT — 80% Added Water</div>
     <div class="lut-meta">true total f<sub>w</sub> = <span>0.8800</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span></div>
     <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-3"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-4">
+    <div class="panel"><div class="panel-title">LUT — AW 76% Gel</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8400</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span> &nbsp;|&nbsp; scattering range = <span>0.5 – 5.0</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-4"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-5">
+    <div class="panel"><div class="panel-title">LUT — AW 77% Gel</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8500</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span> &nbsp;|&nbsp; scattering range = <span>0.5 – 5.0</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-5"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-6">
+    <div class="panel"><div class="panel-title">LUT — AW 78% Gel</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8600</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span> &nbsp;|&nbsp; scattering range = <span>0.5 – 5.0</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-6"></tbody></table></div>
+  </div>
+  <div class="lut-panel" id="lut-panel-7">
+    <div class="panel"><div class="panel-title">LUT — AW 79% Gel</div>
+    <div class="lut-meta">true total f<sub>w</sub> = <span>0.8700</span> &nbsp;|&nbsp; close = <span>4.5 mm</span> &nbsp;|&nbsp; far = <span>7.0 mm</span> &nbsp;|&nbsp; scattering range = <span>0.5 – 5.0</span></div>
+    <table class="lut-table"><thead><tr><th>Reduced Scattering Coeff.</th><th>Ratio Far/Close 1450</th><th>Ratio Far/Close 1650</th></tr></thead><tbody id="lut-body-7"></tbody></table></div>
   </div>
 </div>
 </div>
@@ -739,6 +767,10 @@ const LUTS = [
   { label:"73.68%",  fw:"0.8168", rows:[[0.5,0.04780343,0.2584382],[1.0,0.0211923,0.2550018],[2.0,0.006005975,0.2279702],[3.0,0.002544583,0.1897627],[5.0,0.0009361549,0.1269523],[7.0,0.0004517797,0.08662391],[10.0,0.0001866874,0.05242532],[15.0,5.464973e-5,0.02560226],[20.0,1.755784e-5,0.01367261],[25.0,1.689196e-6,0.007987429],[30.0,0,0.004853203]] },
   { label:"75%",     fw:"0.8300", rows:[[0.5,0.04691898,0.254869],[1.0,0.02077645,0.2512975],[2.0,0.005756975,0.2241691],[3.0,0.002374005,0.1863929],[5.0,0.0008550223,0.124547],[7.0,0.0004083815,0.08470439],[10.0,0.0001689894,0.05111445],[15.0,4.725453e-5,0.02478049],[20.0,1.493456e-5,0.01321501],[25.0,8.596124e-7,0.007672871],[30.0,0,0.004639481]] },
   { label:"80%",     fw:"0.8800", rows:[[0.5,0.04371464,0.2417906],[1.0,0.0192739,0.2377475],[2.0,0.004903865,0.2103367],[3.0,0.001825298,0.1741625],[5.0,0.0006065237,0.1158419],[7.0,0.0002785654,0.07781135],[10.0,0.0001158814,0.04643944],[15.0,2.724329e-5,0.02189988],[20.0,8.09069e-6,0.0116163],[25.0,0,0.006589658],[30.0,0,0.00391185]] },
+  { label:"AW 76%", fw:"0.8400", rows:[[0.5,0.0437918018872,0.235778377663],[1.0,0.0196280565229,0.225647963054],[2.0,0.00576153176591,0.197362583158],[3.0,0.00238897264831,0.162640970343],[5.0,0.00091435256127,0.109042149568]] },
+  { label:"AW 77%", fw:"0.8500", rows:[[0.5,0.0437724986141,0.237267274957],[1.0,0.0195389130376,0.228613853197],[2.0,0.00574580452681,0.203390929666],[3.0,0.00240506736373,0.169647897104],[5.0,0.000924648451925,0.115557093109]] },
+  { label:"AW 78%", fw:"0.8600", rows:[[0.5,0.0437532038497,0.238765574364],[1.0,0.0194501744096,0.23161872665],[2.0,0.00573012021832,0.209603409159],[3.0,0.00242127051064,0.176956697511],[5.0,0.000935060277471,0.122461285114]] },
+  { label:"AW 79%", fw:"0.8700", rows:[[0.5,0.0437339175904,0.240273335257],[1.0,0.0193618388001,0.234663095805],[2.0,0.00571447872325,0.216005645893],[3.0,0.00243758281956,0.184580376936],[5.0,0.000945589343371,0.12977798202]] },
 ];
 
 // Populate LUT tables
