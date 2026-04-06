@@ -1,0 +1,2224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>1450-Anchored Constrained Inversion Pipeline — SWIR Phantom</title>
+<script>
+// ── jsPDF Multi-Fallback Loader ──
+// Tries multiple CDNs sequentially until one works.
+(function(){
+  const SOURCES = [
+    'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js',
+    'https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js',
+    'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js'
+  ];
+  let idx = 0;
+  function tryNext() {
+    if (idx >= SOURCES.length) {
+      console.warn('jsPDF: All CDN sources failed.');
+      window._jspdfFailed = true;
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = SOURCES[idx];
+    s.onload = function() {
+      console.log('jsPDF loaded from: ' + SOURCES[idx]);
+      window._jspdfReady = true;
+    };
+    s.onerror = function() {
+      console.warn('jsPDF failed from: ' + SOURCES[idx]);
+      idx++;
+      tryNext();
+    };
+    document.head.appendChild(s);
+  }
+  tryNext();
+})();
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:        #0d0f12;
+    --panel:     #13171e;
+    --border:    #232830;
+    --border2:   #2e3540;
+    --accent:    #f59e0b;
+    --accent2:   #10b981;
+    --warn:      #ef4444;
+    --info:      #3b82f6;
+    --text:      #dde4ed;
+    --text-dim:  #7e8fa8;
+    --text-head: #ffffff;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 0 0 80px;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px);
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+
+  header { margin-bottom: 28px; }
+  .logo { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.25em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+  h1 { font-family: var(--mono); font-size: 26px; font-weight: 600; color: var(--text-head); letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .subtitle { margin-top: 6px; color: var(--text-dim); font-size: 13px; font-weight: 300; line-height: 1.5; }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 24px; margin-bottom: 20px; }
+  .panel-title {
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent);
+    margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .panel-title::after { content: ''; flex: 1; height: 1px; background: rgba(245,158,11,0.2); }
+
+  .warning-banner {
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.25);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .warning-banner strong { color: var(--info); }
+  .warning-banner em { color: var(--accent); font-style: normal; font-weight: 500; }
+
+  .info-note {
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.2);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-dim);
+  }
+  .info-note strong { color: var(--info); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 600px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+
+  .field label {
+    display: block; font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.1em; color: var(--text-dim); margin-bottom: 5px;
+    text-transform: uppercase;
+  }
+  .field input, .field select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border2);
+    border-radius: 4px; color: var(--text-head); font-family: var(--mono);
+    font-size: 13px; padding: 7px 10px; outline: none;
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+
+  .btn-run {
+    display: block; width: 100%; margin-top: 4px; padding: 13px;
+    background: var(--accent); color: #000; border: none; border-radius: 4px;
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    cursor: pointer; transition: background 0.15s, transform 0.1s;
+  }
+  .btn-run:hover { background: #fbbf24; }
+  .btn-run:active { transform: scale(0.99); }
+  .btn-run:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+
+  .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+  .kv {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 12px;
+  }
+  .kv-k { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+  .kv-v { font-family: var(--mono); font-size: 13px; color: var(--text-head); font-weight: 500; word-break: break-all; }
+  .kv-v.accent { color: var(--accent); }
+  .kv-v.green  { color: var(--accent2); }
+  .kv-v.warn   { color: var(--warn); }
+  .kv-v.info   { color: var(--info); }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  thead tr { border-bottom: 1px solid var(--border2); }
+  th { text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  th:not(:first-child), td:not(:first-child) { text-align: right; }
+  tr:last-child td { border-bottom: none; }
+  .best-row td { color: var(--accent) !important; font-weight: 600; }
+
+  .eq-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.8;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+
+  details { margin-bottom: 20px; }
+  summary {
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
+    cursor: pointer; padding: 10px 0;
+    list-style: none;
+  }
+  summary::before { content: '▸ '; color: var(--accent); }
+  details[open] summary::before { content: '▾ '; }
+
+  .progress-wrap {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; height: 24px; overflow: hidden;
+    margin: 10px 0; position: relative;
+  }
+  .progress-bar {
+    height: 100%; background: linear-gradient(90deg, var(--accent), #fbbf24);
+    transition: width 0.1s; border-radius: 4px 0 0 4px;
+  }
+  .progress-text {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 10px; color: var(--text-head);
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+
+  .heatmap-wrap {
+    text-align: center; margin: 16px 0;
+  }
+  .heatmap-wrap canvas {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    image-rendering: pixelated;
+  }
+  .heatmap-label {
+    font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+    margin-top: 6px; text-transform: uppercase; letter-spacing: 0.1em;
+  }
+
+  .sep { height: 1px; background: var(--border); margin: 24px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ═══ HEADER ═══ -->
+  <header>
+    <div class="logo">SWIR Phantom Inversion</div>
+    <h1>1450-Anchored <span>Constrained</span> Inversion</h1>
+    <div class="subtitle">
+      Two-stage constrained inversion: (1) estimate μ_s'(1450) from the 1450 ratio as a scattering anchor,
+      (2) sweep b and AW to fit the 1650 ratio, deriving A analytically from the anchor.
+      Reports both AW and true total water fraction via recipe bookkeeping.
+    </div>
+  </header>
+
+  <!-- ═══ METHOD INFO BANNER ═══ -->
+  <div class="warning-banner">
+    <strong>ℹ Constrained Inversion Method:</strong> This is <em>not</em> a full blind inversion over 3 unknowns.
+    It is a <em>constrained inversion</em> that uses the 1450 ratio as a scattering anchor.
+    The key assumption is that the 1450 far/close ratio is <em>approximately monotonic in μ_s'(1450)</em>
+    and <em>weakly dependent on water fraction</em>. This allows μ_s'(1450) to be estimated independently,
+    reducing the remaining search to <em>2 unknowns</em> (AW, b) fitted against the 1650 ratio.
+    The result quality depends on how valid that "water-insensitive" assumption is for your measurement regime.
+  </div>
+
+  <!-- ═══ SECTION 1: MEASUREMENT INPUTS ═══ -->
+  <div class="panel">
+    <div class="panel-title">01 — Measurement Inputs</div>
+    <div class="info-note">
+      <strong>Input mode:</strong> Enter 4 PTFE-normalized signals or 2 far/close ratios directly.
+      If signals are provided, ratios are computed automatically. If you only have ratios, leave signal fields empty.
+    </div>
+
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+      PTFE-Normalised Signals (optional)
+    </div>
+    <div class="grid-4">
+      <div class="field"><label>1450 Far (7mm)</label><input type="number" id="sig-1450f" step="any" placeholder="e.g. 0.000307"></div>
+      <div class="field"><label>1450 Close (4.5mm)</label><input type="number" id="sig-1450c" step="any" placeholder="e.g. 0.05457"></div>
+      <div class="field"><label>1650 Far (7mm)</label><input type="number" id="sig-1650f" step="any" placeholder="e.g. 0.01753"></div>
+      <div class="field"><label>1650 Close (4.5mm)</label><input type="number" id="sig-1650c" step="any" placeholder="e.g. 0.08239"></div>
+    </div>
+
+    <div style="margin-top:16px; font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+      Far / Close Ratios (auto-computed from signals, or enter manually)
+    </div>
+    <div class="grid-2">
+      <div class="field"><label>Ratio₁₄₅₀ (far/close)</label><input type="number" id="ratio-1450" step="any" placeholder="auto or manual"></div>
+      <div class="field"><label>Ratio₁₆₅₀ (far/close)</label><input type="number" id="ratio-1650" step="any" placeholder="auto or manual"></div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 2: 1450 ANCHOR + SEARCH BOUNDS ═══ -->
+  <div class="panel">
+    <div class="panel-title">02 — 1450 Anchor + Constrained Search Bounds</div>
+
+    <div class="eq-block">Stage 1 — 1450 Scattering Anchor:
+  Scan μ_s'(1450) candidates → predict R₁₄₅₀ via forward model
+  → collapse across AW (near-invariant assumption)
+  → match measured R₁₄₅₀ → estimate μ_s'(1450)
+
+Stage 2 — Constrained AW/b Search:
+  For each trial b:
+    μ_s'(1650) = μ_s'(1450)_est × (1650/1450)^(−b)
+    A = μ_s'(1450)_est × (1.45)^b     [derived, not searched]
+  For each trial AW:
+    true f_w = AW + (IL stock loading) × (water fraction in IL stock)
+    μ_a(1650) from composition
+    predict R₁₆₅₀ → minimise E = [ln(R₁₆₅₀_meas / R₁₆₅₀_pred)]²</div>
+
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin:16px 0 10px;">
+      Stage 1: μ_s'(1450) anchor search range
+    </div>
+    <div class="grid-3">
+      <div class="field"><label>μ_s'(1450) min (cm⁻¹)</label><input type="number" id="mus-min" value="0.5" step="0.1"></div>
+      <div class="field"><label>μ_s'(1450) max</label><input type="number" id="mus-max" value="30.0" step="0.1"></div>
+      <div class="field"><label>μ_s'(1450) steps</label><input type="number" id="mus-steps" value="200" step="1" min="10"></div>
+    </div>
+
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin:16px 0 10px;">
+      Stage 2: AW search range
+    </div>
+    <div class="grid-3">
+      <div class="field"><label>AW min</label><input type="number" id="aw-min" value="0.60" step="0.01"></div>
+      <div class="field"><label>AW max</label><input type="number" id="aw-max" value="0.89" step="0.01"></div>
+      <div class="field"><label>AW steps</label><input type="number" id="aw-steps" value="60" step="1" min="3"></div>
+    </div>
+
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin:16px 0 10px;">
+      Stage 2: b (spectral slope) search range
+    </div>
+    <div class="grid-3">
+      <div class="field"><label>b min</label><input type="number" id="b-min" value="0.0" step="0.1"></div>
+      <div class="field"><label>b max</label><input type="number" id="b-max" value="3.0" step="0.1"></div>
+      <div class="field"><label>b steps</label><input type="number" id="b-steps" value="60" step="1" min="3"></div>
+    </div>
+
+    <div class="info-note" style="margin-top:14px;">
+      <strong>Recipe-consistent search:</strong> The grid variable is <em>AW</em>. True total water fraction
+      = AW + (IL stock loading × water fraction in IL stock). Both are reported.
+    </div>
+
+    <div style="margin-top:8px; font-family:var(--mono);font-size:11px; color:var(--text-dim);">
+      Stage 2 grid points: <span id="total-points" style="color:var(--accent);font-weight:600;">3,600</span>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 3: FORWARD MODEL ═══ -->
+  <details>
+    <summary>03 — Forward Model / Geometry Settings</summary>
+    <div class="panel" style="margin-top:8px;">
+      <div class="info-note">
+        <strong>Preserved from SRS Pipeline.</strong> Same constants and geometry parameters.
+        Change only if you have a specific reason.
+      </div>
+      <div class="grid-3">
+        <div class="field"><label>ρ close (cm)</label><input type="number" id="p-rhoClose" value="0.45" step="any"></div>
+        <div class="field"><label>ρ far (cm)</label><input type="number" id="p-rhoFar" value="0.7" step="any"></div>
+        <div class="field"><label>ρ₀ (cm)</label><input type="number" id="p-rho0" value="0" step="any"></div>
+      </div>
+      <div class="grid-3" style="margin-top:10px;">
+        <div class="field"><label>γ 1450</label><input type="number" id="p-gamma1450" value="1.7697641835288578" step="any"></div>
+        <div class="field"><label>γ 1650</label><input type="number" id="p-gamma1650" value="1.3112650565438542" step="any"></div>
+        <div class="field"><label>n (refractive index)</label><input type="number" id="p-n" value="1.37" step="any"></div>
+      </div>
+      <div class="grid-3" style="margin-top:10px;">
+        <div class="field"><label>Gain C (1450)</label><input type="number" id="p-gain" value="32.59266291598235" step="any"></div>
+        <div class="field"><label>IL20 stock loading</label><input type="number" id="p-il" value="0.10" step="any"></div>
+        <div class="field"><label>Water fraction in IL stock</label><input type="number" id="p-il-water" value="0.80" step="any"></div>
+      </div>
+
+      <div style="margin-top:14px; font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+        Extinction coefficients (cm⁻¹)
+      </div>
+      <div class="grid-3">
+        <div class="field"><label>ε water 1450</label><input type="number" id="p-ew1450" value="28.8" step="any"></div>
+        <div class="field"><label>ε water 1650</label><input type="number" id="p-ew1650" value="5.7" step="any"></div>
+        <div class="field"><label></label></div>
+      </div>
+      <div class="grid-3" style="margin-top:10px;">
+        <div class="field"><label>ε lipid 1450</label><input type="number" id="p-eil1450" value="0" step="any"></div>
+        <div class="field"><label>ε lipid 1650</label><input type="number" id="p-eil1650" value="0" step="any"></div>
+        <div class="field"><label></label></div>
+      </div>
+      <div class="grid-3" style="margin-top:10px;">
+        <div class="field"><label>ε gel 1450</label><input type="number" id="p-eg1450" value="0" step="any"></div>
+        <div class="field"><label>ε gel 1650</label><input type="number" id="p-eg1650" value="0" step="any"></div>
+        <div class="field"><label></label></div>
+      </div>
+
+      <div class="info-note" style="margin-top:16px;">
+        <strong>Note on gain C:</strong> For ratio-based inversion, the gain C cancels in far/close ratios
+        at each wavelength. However, C is still used inside the forward model for signal computation.
+      </div>
+    </div>
+  </details>
+
+  <!-- ═══ RUN BUTTON ═══ -->
+  <button class="btn-run" id="btn-run" onclick="runConstrainedInversion()">Run Constrained Inversion</button>
+
+  <div id="search-error" class="hidden" style="
+    font-family:var(--mono); font-size:12px; color:var(--warn);
+    background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25);
+    border-radius:4px; padding:12px 16px; margin-top:10px; line-height:1.6;
+  "></div>
+
+  <div class="progress-wrap hidden" id="progress-wrap">
+    <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    <div class="progress-text" id="progress-text">Searching…</div>
+  </div>
+
+  <!-- ═══ SECTION 4: COMPUTED RATIOS ═══ -->
+  <div class="panel hidden" id="sec-ratios">
+    <div class="panel-title">04 — Computed Ratios</div>
+    <div class="kv-grid" id="kv-ratios"></div>
+  </div>
+
+  <!-- ═══ SECTION 5: 1450 ANCHOR RESULT ═══ -->
+  <div class="panel hidden" id="sec-anchor">
+    <div class="panel-title">05 — Stage 1: 1450 Scattering Anchor</div>
+    <div class="kv-grid" id="kv-anchor"></div>
+    <div style="margin-top:16px;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+        1450 Anchor Sensitivity: Predicted R₁₄₅₀ spread across AW at anchor point
+      </div>
+      <div id="anchor-sensitivity-text" style="font-family:var(--mono);font-size:12px;color:var(--text);line-height:1.7;"></div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 6: BEST SOLUTION ═══ -->
+  <div class="panel hidden" id="sec-best">
+    <div class="panel-title">06 — Stage 2: Best Constrained Solution</div>
+    <div class="kv-grid" id="kv-best"></div>
+
+    <div style="margin-top:16px;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+        Forward Model Intermediate Values at Best Solution
+      </div>
+      <div class="kv-grid" id="kv-intermediates"></div>
+    </div>
+
+    <div style="margin-top:16px;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">
+        Predicted vs Measured
+      </div>
+      <table id="tbl-compare">
+        <thead>
+          <tr><th>Quantity</th><th>Measured</th><th>Predicted</th><th>ln(meas/pred)</th></tr>
+        </thead>
+        <tbody id="tbl-compare-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 7: TOP CANDIDATES ═══ -->
+  <div class="panel hidden" id="sec-candidates">
+    <div class="panel-title">07 — Top 20 Candidate Solutions</div>
+    <div class="info-note">
+      <strong>Constrained search results:</strong> A is derived from the 1450 anchor and trial b, not independently searched.
+      Look for whether AW clusters tightly (well-constrained) or spreads (poorly constrained).
+    </div>
+    <table id="tbl-candidates">
+      <thead>
+        <tr>
+          <th>#</th><th>AW</th><th>true f_w</th><th>b</th><th>derived A</th>
+          <th>μ_s'(1450)</th><th>μ_s'(1650)</th>
+          <th>μ_a(1650)</th><th>pred R₁₆₅₀</th><th>Error</th>
+        </tr>
+      </thead>
+      <tbody id="tbl-candidates-body"></tbody>
+    </table>
+  </div>
+
+  <!-- ═══ SECTION 8: DIAGNOSTIC PLOTS ═══ -->
+  <div class="panel hidden" id="sec-plots">
+    <div class="panel-title">08 — Diagnostic Plots</div>
+
+    <div class="info-note">
+      <strong>How to read these plots:</strong>
+      Plot A shows the 1450 anchor — a monotonic curve of predicted R₁₄₅₀ vs μ_s'(1450).
+      Plot B shows how much R₁₄₅₀ varies across AW at the anchor point.
+      Plots C–E show the constrained-search error landscape over AW and b.
+    </div>
+
+    <!-- Plot A: 1450 Anchor Curve -->
+    <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
+      <div style="flex:1; min-width:380px;">
+        <div class="heatmap-label" style="margin-bottom:8px; text-align:center;">
+          A. 1450 Anchor: Predicted R₁₄₅₀ vs μ_s'(1450)
+        </div>
+        <canvas id="plot-anchor" width="460" height="300"
+                style="width:100%; border:1px solid var(--border); border-radius:6px; background:var(--bg);"></canvas>
+      </div>
+      <div style="flex:1; min-width:380px;">
+        <div class="heatmap-label" style="margin-bottom:8px; text-align:center;">
+          B. 1450 Anchor Sensitivity: R₁₄₅₀ spread across AW
+        </div>
+        <canvas id="plot-anchor-spread" width="460" height="300"
+                style="width:100%; border:1px solid var(--border); border-radius:6px; background:var(--bg);"></canvas>
+      </div>
+    </div>
+
+    <!-- Plot C: Heatmap -->
+    <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
+      <div style="flex:1; min-width:380px;">
+        <div class="heatmap-label" style="margin-bottom:8px; text-align:center;">
+          C. Constrained Search Heatmap: AW vs b (log₁₀ error)
+        </div>
+        <canvas id="plot-heatmap" width="460" height="300"
+                style="width:100%; border:1px solid var(--border); border-radius:6px; background:var(--bg);"></canvas>
+      </div>
+    </div>
+
+    <!-- Plot D and E: Error profiles -->
+    <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center;">
+      <div style="flex:1; min-width:380px;">
+        <div class="heatmap-label" style="margin-bottom:8px; text-align:center;">
+          D. Min Error vs AW / true f_w
+        </div>
+        <canvas id="plot-err-aw" width="460" height="300"
+                style="width:100%; border:1px solid var(--border); border-radius:6px; background:var(--bg);"></canvas>
+      </div>
+      <div style="flex:1; min-width:380px;">
+        <div class="heatmap-label" style="margin-bottom:8px; text-align:center;">
+          E. Min Error vs b (spectral slope)
+        </div>
+        <canvas id="plot-err-b" width="460" height="300"
+                style="width:100%; border:1px solid var(--border); border-radius:6px; background:var(--bg);"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 9: IDENTIFIABILITY ═══ -->
+  <div class="panel hidden" id="sec-identifiability">
+    <div class="panel-title">09 — Identifiability Assessment</div>
+    <div id="ident-notes" style="font-family:var(--mono);font-size:12px;line-height:1.8;color:var(--text);"></div>
+  </div>
+
+  <!-- ═══ SECTION 10: PDF ═══ -->
+  <div class="panel hidden" id="sec-pdf">
+    <div class="panel-title">10 — Export Report</div>
+    <div class="info-note">
+      <strong>Audit-ready PDF:</strong> Generates a comprehensive report containing both stages of the constrained inversion,
+      all inputs, parameters, anchor results, best solution, candidate table, marginal error profiles,
+      and a machine-readable structured data dump suitable for AI analysis.
+      <span id="jspdf-status" style="display:block;margin-top:6px;"></span>
+    </div>
+    <button class="btn-run" id="btn-pdf" onclick="generatePDF()" style="background:#3b82f6;">
+      Download PDF Report
+    </button>
+  </div>
+
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+//
+//  1450-ANCHORED CONSTRAINED INVERSION PIPELINE
+//
+//  Stage 1: Estimate μ_s'(1450) from R₁₄₅₀ (1D anchor)
+//  Stage 2: Sweep b and AW, derive A analytically, fit R₁₆₅₀
+//
+//  Physics: Diffusion-theory forward model (workbook-exact from SRS Pipeline)
+//  Recipe: AW search variable, true f_w derived from recipe bookkeeping
+//
+// ══════════════════════════════════════════════════════════════════════
+
+let lastSearchState = null;
+
+// ── Auto-compute ratios from signals ──
+['sig-1450c','sig-1450f','sig-1650c','sig-1650f'].forEach(id => {
+  document.getElementById(id).addEventListener('input', autoComputeRatios);
+});
+
+function autoComputeRatios() {
+  const c1450 = parseFloat(document.getElementById('sig-1450c').value);
+  const f1450 = parseFloat(document.getElementById('sig-1450f').value);
+  const c1650 = parseFloat(document.getElementById('sig-1650c').value);
+  const f1650 = parseFloat(document.getElementById('sig-1650f').value);
+  if (!isNaN(c1450) && !isNaN(f1450) && c1450 > 0)
+    document.getElementById('ratio-1450').value = (f1450 / c1450).toFixed(9);
+  if (!isNaN(c1650) && !isNaN(f1650) && c1650 > 0)
+    document.getElementById('ratio-1650').value = (f1650 / c1650).toFixed(9);
+}
+
+// ── Update total grid points ──
+['aw-steps','b-steps'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateTotalPoints);
+});
+function updateTotalPoints() {
+  const nAw = parseInt(document.getElementById('aw-steps').value) || 1;
+  const nB  = parseInt(document.getElementById('b-steps').value) || 1;
+  document.getElementById('total-points').textContent = (nAw * nB).toLocaleString();
+}
+updateTotalPoints();
+
+
+// ══════════════════════════════════════════════════════════════════════
+// FORWARD MODEL — exact reproduction from SRS Pipeline
+// ══════════════════════════════════════════════════════════════════════
+
+function computeK(n) {
+  const a = Math.pow((n - 1) / (n + 1), 2);
+  const bCoeff = Math.cos(Math.asin(1 / n));
+  return ((1 - a) * (1 - bCoeff * bCoeff)) / ((1 + a) * (1 - a) * Math.pow(bCoeff, 3));
+}
+
+function forwardModel(mus, mua, rho, gamma, C, rho0, n) {
+  const D = 1 / (3 * mus);
+  const z0 = 1 / mus;
+  const K = computeK(n);
+  const zb = (2 * D) / K;
+  const eff_rho = rho * gamma + rho0;
+  const mu_eff = Math.sqrt(3 * mua * mus);
+  const r1 = Math.sqrt(eff_rho * eff_rho + z0 * z0);
+  const r2 = Math.sqrt(eff_rho * eff_rho + Math.pow(z0 + 2 * zb, 2));
+  const pseudo = Math.exp(-mu_eff * r1) / r1;
+  const image  = Math.exp(-mu_eff * r2) / r2;
+  return (C / (4 * Math.PI * D)) * (pseudo - image);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// RECIPE BOOKKEEPING
+// ══════════════════════════════════════════════════════════════════════
+
+function computeCompositionFromAW(aw, p) {
+  const ilStock = p.ilStock;
+  const waterInStock = p.ilWaterFrac;
+  const trueFw = aw + ilStock * waterInStock;
+  const gelFrac = 1 - aw - ilStock;
+  const lipidFrac = ilStock * (1 - waterInStock);
+  return { aw, trueFw, gelFrac, lipidFrac, ilStock, waterInStock };
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPUTE ALL SIGNALS (recipe-consistent)
+// ══════════════════════════════════════════════════════════════════════
+
+function computeAllSignals(aw, mus1450, mus1650, p) {
+  const comp = computeCompositionFromAW(aw, p);
+  const mua1450 = comp.trueFw * p.ew1450 + comp.gelFrac * p.eg1450 + comp.lipidFrac * p.eil1450;
+  const mua1650 = comp.trueFw * p.ew1650 + comp.gelFrac * p.eg1650 + comp.lipidFrac * p.eil1650;
+
+  const p1450c = forwardModel(mus1450, mua1450, p.rhoClose, p.gamma1450, p.gain, p.rho0, p.n);
+  const p1450f = forwardModel(mus1450, mua1450, p.rhoFar,   p.gamma1450, p.gain, p.rho0, p.n);
+  const p1650c = forwardModel(mus1650, mua1650, p.rhoClose, p.gamma1650, 1,      p.rho0, p.n);
+  const p1650f = forwardModel(mus1650, mua1650, p.rhoFar,   p.gamma1650, 1,      p.rho0, p.n);
+
+  return {
+    p1450c, p1450f, p1650c, p1650f,
+    ratio1450_pred: p1450f / p1450c,
+    ratio1650_pred: p1650f / p1650c,
+    mua1450, mua1650,
+    gelFrac: comp.gelFrac,
+    lipidFrac: comp.lipidFrac,
+    trueFw: comp.trueFw,
+    aw: comp.aw,
+  };
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// SCATTERING POWER LAW
+// ══════════════════════════════════════════════════════════════════════
+
+function musPrime(A, b, lam_nm) {
+  const lam_um = lam_nm / 1000;
+  return A * Math.pow(lam_um, -b);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// READ ALL PARAMETERS FROM UI
+// ══════════════════════════════════════════════════════════════════════
+
+function readParams() {
+  return {
+    rhoClose:  parseFloat(document.getElementById('p-rhoClose').value),
+    rhoFar:    parseFloat(document.getElementById('p-rhoFar').value),
+    rho0:      parseFloat(document.getElementById('p-rho0').value),
+    gamma1450: parseFloat(document.getElementById('p-gamma1450').value),
+    gamma1650: parseFloat(document.getElementById('p-gamma1650').value),
+    gain:      parseFloat(document.getElementById('p-gain').value),
+    n:         parseFloat(document.getElementById('p-n').value),
+    ilStock:   parseFloat(document.getElementById('p-il').value),
+    ilWaterFrac: parseFloat(document.getElementById('p-il-water').value),
+    ew1450:    parseFloat(document.getElementById('p-ew1450').value),
+    ew1650:    parseFloat(document.getElementById('p-ew1650').value),
+    eil1450:   parseFloat(document.getElementById('p-eil1450').value),
+    eil1650:   parseFloat(document.getElementById('p-eil1650').value),
+    eg1450:    parseFloat(document.getElementById('p-eg1450').value),
+    eg1650:    parseFloat(document.getElementById('p-eg1650').value),
+  };
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// KV HTML HELPER
+// ══════════════════════════════════════════════════════════════════════
+
+function kvHTML(items) {
+  return items.map(([k, v, cls]) =>
+    `<div class="kv"><div class="kv-k">${k}</div><div class="kv-v ${cls || ''}">${v}</div></div>`
+  ).join('');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// CANVAS PLOT HELPERS
+// ══════════════════════════════════════════════════════════════════════
+
+function setupCanvas(canvasId, margin) {
+  const canvas = document.getElementById(canvasId);
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.width;
+  const H = canvas.height;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  const m = margin || { top: 28, right: 20, bottom: 44, left: 58 };
+  const plot = { x: m.left, y: m.top, w: W - m.left - m.right, h: H - m.top - m.bottom };
+  return { ctx, W, H, plot };
+}
+
+function drawAxes(ctx, plot, xRange, yRange, xTitle, yTitle, nTicksX, nTicksY) {
+  nTicksX = nTicksX || 6;
+  nTicksY = nTicksY || 5;
+  ctx.fillStyle = '#0d0f12';
+  ctx.fillRect(0, 0, plot.x + plot.w + 30, plot.y + plot.h + 50);
+  ctx.strokeStyle = 'rgba(35,40,48,0.8)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= nTicksX; i++) {
+    const px = plot.x + (i / nTicksX) * plot.w;
+    ctx.beginPath(); ctx.moveTo(px, plot.y); ctx.lineTo(px, plot.y + plot.h); ctx.stroke();
+  }
+  for (let i = 0; i <= nTicksY; i++) {
+    const py = plot.y + (i / nTicksY) * plot.h;
+    ctx.beginPath(); ctx.moveTo(plot.x, py); ctx.lineTo(plot.x + plot.w, py); ctx.stroke();
+  }
+  ctx.strokeStyle = '#3e4858';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
+  ctx.fillStyle = '#7e8fa8';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= nTicksX; i++) {
+    const val = xRange[0] + (i / nTicksX) * (xRange[1] - xRange[0]);
+    const px = plot.x + (i / nTicksX) * plot.w;
+    ctx.fillText(smartLabel(val), px, plot.y + plot.h + 14);
+  }
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= nTicksY; i++) {
+    const val = yRange[0] + (1 - i / nTicksY) * (yRange[1] - yRange[0]);
+    const py = plot.y + (i / nTicksY) * plot.h;
+    ctx.fillText(smartLabel(val), plot.x - 6, py + 3.5);
+  }
+  ctx.fillStyle = '#9ca8be';
+  ctx.font = '11px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(xTitle, plot.x + plot.w / 2, plot.y + plot.h + 34);
+  ctx.save();
+  ctx.translate(14, plot.y + plot.h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yTitle, 0, 0);
+  ctx.restore();
+}
+
+function smartLabel(v) {
+  if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(1);
+  if (Math.abs(v) >= 100) return v.toFixed(0);
+  if (Math.abs(v) >= 1) return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+function mapX(val, xRange, plot) {
+  return plot.x + ((val - xRange[0]) / (xRange[1] - xRange[0])) * plot.w;
+}
+function mapY(val, yRange, plot) {
+  return plot.y + plot.h - ((val - yRange[0]) / (yRange[1] - yRange[0])) * plot.h;
+}
+
+function viridisColor(t) {
+  t = 1 - t;
+  if (t < 0.25) {
+    const s = t / 0.25;
+    return [Math.round(68 + s * (49 - 68)), Math.round(1 + s * (104 - 1)), Math.round(84 + s * (142 - 84))];
+  } else if (t < 0.5) {
+    const s = (t - 0.25) / 0.25;
+    return [Math.round(49 + s * (33 - 49)), Math.round(104 + s * (145 - 104)), Math.round(142 + s * (140 - 142))];
+  } else if (t < 0.75) {
+    const s = (t - 0.5) / 0.25;
+    return [Math.round(33 + s * (94 - 33)), Math.round(145 + s * (201 - 145)), Math.round(140 + s * (98 - 140))];
+  } else {
+    const s = (t - 0.75) / 0.25;
+    return [Math.round(94 + s * (253 - 94)), Math.round(201 + s * (231 - 201)), Math.round(98 + s * (37 - 98))];
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// MAIN CONSTRAINED INVERSION
+// ══════════════════════════════════════════════════════════════════════
+
+function runConstrainedInversion() {
+  const errEl = document.getElementById('search-error');
+  function showError(msg) {
+    errEl.textContent = '⚠ ' + msg;
+    errEl.classList.remove('hidden');
+  }
+  errEl.classList.add('hidden');
+
+  // ── 1. Read measured ratios ──
+  const r1450_meas = parseFloat(document.getElementById('ratio-1450').value);
+  const r1650_meas = parseFloat(document.getElementById('ratio-1650').value);
+  if (isNaN(r1450_meas) || isNaN(r1650_meas) || r1450_meas <= 0 || r1650_meas <= 0) {
+    showError('Please enter valid positive ratios for both wavelengths.');
+    return;
+  }
+
+  // ── 2. Read search bounds ──
+  const musMin  = parseFloat(document.getElementById('mus-min').value);
+  const musMax  = parseFloat(document.getElementById('mus-max').value);
+  const nMus    = parseInt(document.getElementById('mus-steps').value);
+  const awMin   = parseFloat(document.getElementById('aw-min').value);
+  const awMax   = parseFloat(document.getElementById('aw-max').value);
+  const nAw     = parseInt(document.getElementById('aw-steps').value);
+  const bMin    = parseFloat(document.getElementById('b-min').value);
+  const bMax    = parseFloat(document.getElementById('b-max').value);
+  const nB      = parseInt(document.getElementById('b-steps').value);
+
+  // ── 3. Read forward model params ──
+  const p = readParams();
+
+  // ── 4. Validate ──
+  if ([musMin, musMax, nMus, awMin, awMax, nAw, bMin, bMax, nB].some(v => isNaN(v))) {
+    showError('One or more search parameters are invalid.');
+    return;
+  }
+  if (awMax + p.ilStock >= 1.0) {
+    showError(`AW max (${awMax}) + IL stock loading (${p.ilStock}) ≥ 1.0 — gelatin fraction would be negative.`);
+    return;
+  }
+
+  // ── 5. Build arrays ──
+  const musArr = [];
+  for (let i = 0; i < nMus; i++) musArr.push(musMin + i * (musMax - musMin) / Math.max(nMus - 1, 1));
+  const awArr = [];
+  for (let i = 0; i < nAw; i++) awArr.push(awMin + i * (awMax - awMin) / Math.max(nAw - 1, 1));
+  const bArr = [];
+  for (let i = 0; i < nB; i++) bArr.push(bMin + i * (bMax - bMin) / Math.max(nB - 1, 1));
+
+  // ── 6. Progress ──
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressBar  = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+  progressWrap.classList.remove('hidden');
+  progressBar.style.width = '0%';
+  progressText.textContent = 'Stage 1: 1450 anchor…';
+  document.getElementById('btn-run').disabled = true;
+
+  // ── Use setTimeout so the UI can update ──
+  setTimeout(() => {
+    // ═══════════════════════════════════════════
+    // STAGE 1: 1450 SCATTERING ANCHOR
+    // ═══════════════════════════════════════════
+    //
+    // For each candidate μ_s'(1450), predict R₁₄₅₀ across the AW grid,
+    // compute the median prediction (collapsed across AW),
+    // and find the μ_s'(1450) whose median prediction best matches measured R₁₄₅₀.
+
+    const anchorData = []; // { mus1450, medianR, minR, maxR, spreadR, errVsMeas }
+
+    for (let im = 0; im < nMus; im++) {
+      const mus1450 = musArr[im];
+      if (mus1450 < 0.01) continue;
+
+      const ratios = [];
+      for (let ia = 0; ia < nAw; ia++) {
+        const aw = awArr[ia];
+        const comp = computeCompositionFromAW(aw, p);
+        if (comp.gelFrac < 0 || comp.trueFw < 0 || comp.trueFw > 1) continue;
+
+        const mua1450 = comp.trueFw * p.ew1450 + comp.gelFrac * p.eg1450 + comp.lipidFrac * p.eil1450;
+        const p1450c = forwardModel(mus1450, mua1450, p.rhoClose, p.gamma1450, p.gain, p.rho0, p.n);
+        const p1450f = forwardModel(mus1450, mua1450, p.rhoFar,   p.gamma1450, p.gain, p.rho0, p.n);
+
+        if (p1450c > 0 && p1450f > 0 && isFinite(p1450c) && isFinite(p1450f)) {
+          ratios.push(p1450f / p1450c);
+        }
+      }
+
+      if (ratios.length === 0) continue;
+
+      ratios.sort((a, b) => a - b);
+      const medianR = ratios[Math.floor(ratios.length / 2)];
+      const minR = ratios[0];
+      const maxR = ratios[ratios.length - 1];
+      const spreadR = maxR - minR;
+      const errVsMeas = Math.pow(Math.log(r1450_meas / medianR), 2);
+
+      anchorData.push({ mus1450, medianR, minR, maxR, spreadR, errVsMeas });
+    }
+
+    if (anchorData.length === 0) {
+      showError('Stage 1 failed: no valid μ_s\'(1450) candidates produced finite R₁₄₅₀ predictions.');
+      document.getElementById('btn-run').disabled = false;
+      progressWrap.classList.add('hidden');
+      return;
+    }
+
+    // Find the best anchor
+    let bestAnchor = anchorData[0];
+    for (const d of anchorData) {
+      if (d.errVsMeas < bestAnchor.errVsMeas) bestAnchor = d;
+    }
+
+    const mus1450_est = bestAnchor.mus1450;
+
+    progressBar.style.width = '20%';
+    progressText.textContent = `Stage 1 done: μ_s'(1450) ≈ ${mus1450_est.toFixed(3)} cm⁻¹. Stage 2…`;
+
+    // ═══════════════════════════════════════════
+    // STAGE 2: CONSTRAINED AW/b SEARCH
+    // ═══════════════════════════════════════════
+
+    const allResults = [];
+    // errGrid[iAw][iB] for heatmap
+    const errGrid = [];
+    for (let i = 0; i < nAw; i++) {
+      errGrid[i] = new Float64Array(nB).fill(Infinity);
+    }
+
+    let iAw = 0;
+    const chunkSize = Math.max(1, Math.ceil(nAw / 40));
+
+    function processChunk() {
+      const endAw = Math.min(iAw + chunkSize, nAw);
+
+      for (; iAw < endAw; iAw++) {
+        const aw = awArr[iAw];
+        const comp = computeCompositionFromAW(aw, p);
+        if (comp.gelFrac < 0 || comp.trueFw < 0 || comp.trueFw > 1) continue;
+
+        // Absorption at 1650 (depends on AW via true water fraction)
+        const mua1650 = comp.trueFw * p.ew1650 + comp.gelFrac * p.eg1650 + comp.lipidFrac * p.eil1650;
+        const mua1450 = comp.trueFw * p.ew1450 + comp.gelFrac * p.eg1450 + comp.lipidFrac * p.eil1450;
+
+        for (let iB = 0; iB < nB; iB++) {
+          const b = bArr[iB];
+
+          // Derive μ_s'(1650) from anchor
+          const mus1650 = mus1450_est * Math.pow(1650 / 1450, -b);
+          // Derive A analytically
+          const A = mus1450_est * Math.pow(1.45, b);
+
+          if (mus1650 < 0.01) continue;
+
+          // Predict R₁₆₅₀
+          const p1650c = forwardModel(mus1650, mua1650, p.rhoClose, p.gamma1650, 1, p.rho0, p.n);
+          const p1650f = forwardModel(mus1650, mua1650, p.rhoFar,   p.gamma1650, 1, p.rho0, p.n);
+
+          if (p1650c <= 0 || p1650f <= 0 || !isFinite(p1650c) || !isFinite(p1650f)) continue;
+
+          const ratio1650_pred = p1650f / p1650c;
+          if (ratio1650_pred <= 0 || !isFinite(ratio1650_pred)) continue;
+
+          const err = Math.pow(Math.log(r1650_meas / ratio1650_pred), 2);
+
+          errGrid[iAw][iB] = err;
+
+          allResults.push({
+            aw, trueFw: comp.trueFw, gelFrac: comp.gelFrac, lipidFrac: comp.lipidFrac,
+            b, A, err,
+            mus1450: mus1450_est, mus1650,
+            mua1450, mua1650,
+            ratio1650_pred,
+          });
+        }
+      }
+
+      const pct = Math.min(100, Math.round(20 + (iAw / nAw) * 80));
+      progressBar.style.width = pct + '%';
+      progressText.textContent = `Stage 2: ${Math.round((iAw/nAw)*100)}% (${iAw}/${nAw} AW slices)`;
+
+      if (iAw < nAw) {
+        setTimeout(processChunk, 0);
+      } else {
+        // ── SEARCH COMPLETE ──
+        progressBar.style.width = '100%';
+        progressText.textContent = `Complete — ${allResults.length.toLocaleString()} valid points evaluated`;
+        document.getElementById('btn-run').disabled = false;
+
+        allResults.sort((a, b) => a.err - b.err);
+
+        displayAllResults(r1450_meas, r1650_meas, allResults, p,
+                          anchorData, bestAnchor, mus1450_est,
+                          awArr, bArr, errGrid);
+      }
+    }
+
+    setTimeout(processChunk, 10);
+  }, 20);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// DISPLAY ALL RESULTS
+// ══════════════════════════════════════════════════════════════════════
+
+function displayAllResults(r1450_meas, r1650_meas, results, p,
+                           anchorData, bestAnchor, mus1450_est,
+                           awArr, bArr, errGrid) {
+  if (results.length === 0) {
+    const errEl = document.getElementById('search-error');
+    errEl.textContent = '⚠ No valid solutions found in Stage 2. Check parameter bounds.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const best = results[0];
+
+  // Store for PDF
+  lastSearchState = {
+    timestamp: new Date().toISOString(),
+    r1450_meas, r1650_meas,
+    signals: {
+      sig1450c: parseFloat(document.getElementById('sig-1450c').value),
+      sig1650f: parseFloat(document.getElementById('sig-1650f').value),
+      sig1450f: parseFloat(document.getElementById('sig-1450f').value),
+      sig1650c: parseFloat(document.getElementById('sig-1650c').value),
+    },
+    anchorData, bestAnchor, mus1450_est,
+    anchorBounds: {
+      musMin: parseFloat(document.getElementById('mus-min').value),
+      musMax: parseFloat(document.getElementById('mus-max').value),
+      nMus: parseInt(document.getElementById('mus-steps').value),
+    },
+    searchBounds: {
+      awMin: awArr[0], awMax: awArr[awArr.length - 1], nAw: awArr.length,
+      bMin: bArr[0], bMax: bArr[bArr.length - 1], nB: bArr.length,
+    },
+    params: { ...p },
+    results, awArr, bArr, errGrid,
+  };
+  document.getElementById('sec-pdf').classList.remove('hidden');
+
+  // ── Section 4: Computed ratios ──
+  document.getElementById('sec-ratios').classList.remove('hidden');
+  document.getElementById('kv-ratios').innerHTML = kvHTML([
+    ['Ratio₁₄₅₀ (meas)', r1450_meas.toFixed(9), 'accent'],
+    ['Ratio₁₆₅₀ (meas)', r1650_meas.toFixed(9), 'accent'],
+    ['ln(Ratio₁₄₅₀)', Math.log(r1450_meas).toFixed(6), ''],
+    ['ln(Ratio₁₆₅₀)', Math.log(r1650_meas).toFixed(6), ''],
+  ]);
+
+  // ── Section 5: 1450 Anchor ──
+  document.getElementById('sec-anchor').classList.remove('hidden');
+  document.getElementById('kv-anchor').innerHTML = kvHTML([
+    ["μ_s'(1450) estimate", mus1450_est.toFixed(6) + ' cm⁻¹', 'accent'],
+    ['Anchor fit error', bestAnchor.errVsMeas.toExponential(6), bestAnchor.errVsMeas < 1e-4 ? 'green' : 'warn'],
+    ['Median predicted R₁₄₅₀', bestAnchor.medianR.toFixed(9), ''],
+    ['Measured R₁₄₅₀', r1450_meas.toFixed(9), ''],
+    ['R₁₄₅₀ min across AW', bestAnchor.minR.toFixed(9), ''],
+    ['R₁₄₅₀ max across AW', bestAnchor.maxR.toFixed(9), ''],
+    ['R₁₄₅₀ spread (max−min)', bestAnchor.spreadR.toExponential(4), bestAnchor.spreadR / Math.abs(bestAnchor.medianR) < 0.05 ? 'green' : 'warn'],
+    ['Relative spread', (100 * bestAnchor.spreadR / Math.abs(bestAnchor.medianR)).toFixed(2) + ' %',
+      bestAnchor.spreadR / Math.abs(bestAnchor.medianR) < 0.05 ? 'green' : 'warn'],
+  ]);
+
+  const relSpread = bestAnchor.spreadR / Math.abs(bestAnchor.medianR);
+  let spreadAssess;
+  if (relSpread < 0.02) {
+    spreadAssess = '<span style="color:var(--accent2);">✓ Excellent — R₁₄₅₀ is nearly invariant across AW at this anchor. The "water-insensitive" assumption is well-justified.</span>';
+  } else if (relSpread < 0.10) {
+    spreadAssess = '<span style="color:var(--accent);">⚠ Moderate — R₁₄₅₀ shows some AW dependence. The anchor is approximate.</span>';
+  } else {
+    spreadAssess = '<span style="color:var(--warn);">✗ Large — R₁₄₅₀ varies significantly across AW. The anchor assumption may be poor. Interpret results cautiously.</span>';
+  }
+  document.getElementById('anchor-sensitivity-text').innerHTML = spreadAssess;
+
+  // ── Section 6: Best solution ──
+  document.getElementById('sec-best').classList.remove('hidden');
+
+  // Also compute R1450 prediction at best solution for diagnostic
+  const bestRes = computeAllSignals(best.aw, best.mus1450, best.mus1650, p);
+
+  document.getElementById('kv-best').innerHTML = kvHTML([
+    ['AW (search variable)', best.aw.toFixed(6), 'green'],
+    ['true f_w (total water)', best.trueFw.toFixed(6), 'green'],
+    ['true f_w (%)', (best.trueFw * 100).toFixed(2) + ' %', 'green'],
+    ['b (spectral slope)', best.b.toFixed(4), 'accent'],
+    ['Derived A', best.A.toFixed(4), 'accent'],
+    ["μ_s'(1450) anchor", best.mus1450.toFixed(6) + ' cm⁻¹', 'info'],
+    ["Inferred μ_s'(1650)", best.mus1650.toFixed(6) + ' cm⁻¹', 'info'],
+    ['μ_a(1650)', best.mua1650.toFixed(6) + ' cm⁻¹', ''],
+    ['Constrained error E', best.err.toExponential(6), best.err < 1e-4 ? 'green' : 'warn'],
+    ['√E', Math.sqrt(best.err).toExponential(4), ''],
+  ]);
+
+  document.getElementById('kv-intermediates').innerHTML = kvHTML([
+    ['μ_a 1450 (cm⁻¹)', best.mua1450.toFixed(6), ''],
+    ['μ_a 1650 (cm⁻¹)', best.mua1650.toFixed(6), ''],
+    ['gel fraction', best.gelFrac.toFixed(6), ''],
+    ['lipid fraction', best.lipidFrac.toFixed(6), ''],
+    ['IL20 stock loading', p.ilStock.toFixed(4), ''],
+    ['water frac in stock', p.ilWaterFrac.toFixed(4), ''],
+    ['stock-water contrib.', (p.ilStock * p.ilWaterFrac).toFixed(6), 'info'],
+    ["μ_s' ratio 1450/1650", (best.mus1450 / best.mus1650).toFixed(4), 'info'],
+  ]);
+
+  // Predicted vs measured table
+  const tbody = document.getElementById('tbl-compare-body');
+  const lnR1450 = Math.log(r1450_meas / bestRes.ratio1450_pred);
+  const lnR1650 = Math.log(r1650_meas / best.ratio1650_pred);
+  tbody.innerHTML = `
+    <tr>
+      <td>Ratio₁₄₅₀ (anchor diagnostic)</td>
+      <td>${r1450_meas.toFixed(9)}</td>
+      <td>${bestRes.ratio1450_pred.toFixed(9)}</td>
+      <td style="color:${Math.abs(lnR1450) < 0.01 ? 'var(--accent2)' : 'var(--text-dim)'}">${lnR1450.toExponential(4)}</td>
+    </tr>
+    <tr>
+      <td>Ratio₁₆₅₀ (constrained fit)</td>
+      <td>${r1650_meas.toFixed(9)}</td>
+      <td>${best.ratio1650_pred.toFixed(9)}</td>
+      <td style="color:${Math.abs(lnR1650) < 0.01 ? 'var(--accent2)' : 'var(--warn)'}">${lnR1650.toExponential(4)}</td>
+    </tr>
+    <tr style="border-top:2px solid var(--border2);">
+      <td>Constrained E (R₁₆₅₀ only)</td>
+      <td></td><td></td>
+      <td style="color:var(--accent);font-weight:600;">${best.err.toExponential(6)}</td>
+    </tr>
+  `;
+
+  // ── Section 7: Top candidates ──
+  document.getElementById('sec-candidates').classList.remove('hidden');
+  const candBody = document.getElementById('tbl-candidates-body');
+  candBody.innerHTML = '';
+  const nShow = Math.min(20, results.length);
+  for (let i = 0; i < nShow; i++) {
+    const r = results[i];
+    const tr = document.createElement('tr');
+    if (i === 0) tr.className = 'best-row';
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${r.aw.toFixed(4)}</td>
+      <td>${r.trueFw.toFixed(4)}</td>
+      <td>${r.b.toFixed(3)}</td>
+      <td>${r.A.toFixed(3)}</td>
+      <td>${r.mus1450.toFixed(4)}</td>
+      <td>${r.mus1650.toFixed(4)}</td>
+      <td>${r.mua1650.toFixed(4)}</td>
+      <td>${r.ratio1650_pred.toFixed(6)}</td>
+      <td>${r.err.toExponential(4)}</td>
+    `;
+    candBody.appendChild(tr);
+  }
+
+  // ── Section 8: Plots ──
+  drawAllPlots(anchorData, bestAnchor, mus1450_est, r1450_meas, r1650_meas,
+               results, awArr, bArr, errGrid);
+
+  // ── Section 9: Identifiability ──
+  assessIdentifiability(results, bestAnchor);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// DIAGNOSTIC PLOTS
+// ══════════════════════════════════════════════════════════════════════
+
+function drawAllPlots(anchorData, bestAnchor, mus1450_est, r1450_meas, r1650_meas,
+                      results, awArr, bArr, errGrid) {
+  document.getElementById('sec-plots').classList.remove('hidden');
+
+  const nAw = awArr.length, nB = bArr.length;
+  const best = results[0];
+
+  // ── PLOT A: 1450 Anchor Curve ──
+  {
+    const { ctx, W, H, plot } = setupCanvas('plot-anchor');
+    const pts = anchorData.filter(d => isFinite(d.medianR) && d.medianR > 0);
+    if (pts.length > 1) {
+      const xRange = [pts[0].mus1450, pts[pts.length - 1].mus1450];
+      const yVals = pts.map(d => d.medianR);
+      const yMin = Math.min(...yVals, r1450_meas);
+      const yMax = Math.max(...yVals, r1450_meas);
+      const yPad = Math.max((yMax - yMin) * 0.1, 0.001);
+      const yRange = [yMin - yPad, yMax + yPad];
+
+      drawAxes(ctx, plot, xRange, yRange, "μ_s'(1450) (cm⁻¹)", 'Predicted R₁₄₅₀ (median)', 6, 5);
+
+      // Draw the collapsed curve
+      ctx.beginPath();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      pts.forEach((d, i) => {
+        const px = mapX(d.mus1450, xRange, plot);
+        const py = mapY(d.medianR, yRange, plot);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+
+      // Measured R₁₄₅₀ horizontal line
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      const my = mapY(r1450_meas, yRange, plot);
+      ctx.beginPath(); ctx.moveTo(plot.x, my); ctx.lineTo(plot.x + plot.w, my); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Label
+      ctx.fillStyle = '#ef4444';
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('Measured R₁₄₅₀', plot.x + plot.w - 4, my - 5);
+
+      // Mark the anchor estimate
+      const bx = mapX(mus1450_est, xRange, plot);
+      const by = mapY(bestAnchor.medianR, yRange, plot);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, plot.y); ctx.lineTo(bx, plot.y + plot.h); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`μ_s' = ${mus1450_est.toFixed(2)}`, bx, plot.y + 14);
+    }
+  }
+
+  // ── PLOT B: 1450 Anchor Spread ──
+  {
+    const { ctx, W, H, plot } = setupCanvas('plot-anchor-spread');
+    const pts = anchorData.filter(d => isFinite(d.spreadR));
+    if (pts.length > 1) {
+      const xRange = [pts[0].mus1450, pts[pts.length - 1].mus1450];
+      const relSpreads = pts.map(d => d.medianR !== 0 ? (d.spreadR / Math.abs(d.medianR)) * 100 : 0);
+      const yMax = Math.min(Math.max(...relSpreads) * 1.1, 100);
+      const yRange = [0, Math.max(yMax, 1)];
+
+      drawAxes(ctx, plot, xRange, yRange, "μ_s'(1450) (cm⁻¹)", 'Relative R₁₄₅₀ spread (%)', 6, 5);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      pts.forEach((d, i) => {
+        const rs = d.medianR !== 0 ? (d.spreadR / Math.abs(d.medianR)) * 100 : 0;
+        const px = mapX(d.mus1450, xRange, plot);
+        const py = mapY(rs, yRange, plot);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+
+      // Fill under
+      const grad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.h);
+      grad.addColorStop(0, 'rgba(59,130,246,0.2)');
+      grad.addColorStop(1, 'rgba(59,130,246,0.01)');
+      ctx.lineTo(mapX(pts[pts.length - 1].mus1450, xRange, plot), plot.y + plot.h);
+      ctx.lineTo(mapX(pts[0].mus1450, xRange, plot), plot.y + plot.h);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Mark anchor point
+      const anchorSpread = bestAnchor.medianR !== 0 ? (bestAnchor.spreadR / Math.abs(bestAnchor.medianR)) * 100 : 0;
+      const bx = mapX(mus1450_est, xRange, plot);
+      const by = mapY(anchorSpread, yRange, plot);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${anchorSpread.toFixed(1)}%`, bx, by - 10);
+    }
+  }
+
+  // ── PLOT C: AW vs b Heatmap ──
+  {
+    const { ctx, W, H, plot } = setupCanvas('plot-heatmap');
+
+    // Find log10 error range
+    let logMin = Infinity, logMax = -Infinity;
+    for (let i = 0; i < nAw; i++) {
+      for (let j = 0; j < nB; j++) {
+        const v = errGrid[i][j];
+        if (isFinite(v) && v > 0) {
+          const lv = Math.log10(v);
+          if (lv < logMin) logMin = lv;
+          if (lv > logMax) logMax = lv;
+        }
+      }
+    }
+    if (logMax - logMin > 8) logMin = logMax - 8;
+    if (!isFinite(logMin)) { logMin = -10; logMax = 0; }
+
+    drawAxes(ctx, plot, [awArr[0], awArr[nAw - 1]], [bArr[0], bArr[nB - 1]],
+             'AW', 'b (spectral slope)', 6, 5);
+
+    // Draw heatmap cells
+    const cellW = plot.w / nAw;
+    const cellH = plot.h / nB;
+    for (let i = 0; i < nAw; i++) {
+      for (let j = 0; j < nB; j++) {
+        const v = errGrid[i][j];
+        let t;
+        if (!isFinite(v) || v <= 0) {
+          t = 1;
+        } else {
+          t = (Math.log10(v) - logMin) / (logMax - logMin);
+          t = Math.max(0, Math.min(1, t));
+        }
+        const rgb = viridisColor(t);
+        ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        const px = plot.x + (i / nAw) * plot.w;
+        const py = plot.y + plot.h - ((j + 1) / nB) * plot.h;
+        ctx.fillRect(px, py, Math.ceil(cellW) + 1, Math.ceil(cellH) + 1);
+      }
+    }
+
+    // Mark best point
+    const bx = mapX(best.aw, [awArr[0], awArr[nAw - 1]], plot);
+    const by = mapY(best.b, [bArr[0], bArr[nB - 1]], plot);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = '9px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`best`, bx + 8, by + 3);
+
+    // Legend
+    ctx.fillStyle = '#7e8fa8';
+    ctx.font = '9px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`log₁₀E: ${logMin.toFixed(1)} → ${logMax.toFixed(1)}`, plot.x + plot.w, plot.y - 4);
+  }
+
+  // ── PLOT D: Error vs AW ──
+  {
+    const { ctx, W, H, plot } = setupCanvas('plot-err-aw');
+    const awProfile = [];
+    for (let i = 0; i < nAw; i++) {
+      let mn = Infinity;
+      for (let j = 0; j < nB; j++) {
+        if (errGrid[i][j] < mn) mn = errGrid[i][j];
+      }
+      if (isFinite(mn) && mn > 0) awProfile.push({ aw: awArr[i], logErr: Math.log10(mn) });
+    }
+
+    if (awProfile.length > 1) {
+      const xRange = [awArr[0], awArr[nAw - 1]];
+      const yVals = awProfile.map(d => d.logErr);
+      const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+      const yPad = Math.max(0.5, (yMax - yMin) * 0.1);
+      const yRange = [yMin - yPad, yMax + yPad];
+
+      drawAxes(ctx, plot, xRange, yRange, 'AW', 'log₁₀(Error)', 6, 5);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      awProfile.forEach((d, i) => {
+        const px = mapX(d.aw, xRange, plot);
+        const py = mapY(d.logErr, yRange, plot);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+
+      const grad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.h);
+      grad.addColorStop(0, 'rgba(245,158,11,0.25)');
+      grad.addColorStop(1, 'rgba(245,158,11,0.02)');
+      ctx.lineTo(mapX(awProfile[awProfile.length - 1].aw, xRange, plot), plot.y + plot.h);
+      ctx.lineTo(mapX(awProfile[0].aw, xRange, plot), plot.y + plot.h);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      const bestPt = awProfile.reduce((a, b) => a.logErr < b.logErr ? a : b);
+      const bx = mapX(bestPt.aw, xRange, plot);
+      const byy = mapY(bestPt.logErr, yRange, plot);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, plot.y); ctx.lineTo(bx, plot.y + plot.h); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath(); ctx.arc(bx, byy, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`AW = ${bestPt.aw.toFixed(3)}`, bx, byy - 10);
+    }
+  }
+
+  // ── PLOT E: Error vs b ──
+  {
+    const { ctx, W, H, plot } = setupCanvas('plot-err-b');
+    const bProfile = [];
+    for (let j = 0; j < nB; j++) {
+      let mn = Infinity;
+      for (let i = 0; i < nAw; i++) {
+        if (errGrid[i][j] < mn) mn = errGrid[i][j];
+      }
+      if (isFinite(mn) && mn > 0) bProfile.push({ b: bArr[j], logErr: Math.log10(mn) });
+    }
+
+    if (bProfile.length > 1) {
+      const xRange = [bArr[0], bArr[nB - 1]];
+      const yVals = bProfile.map(d => d.logErr);
+      const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+      const yPad = Math.max(0.5, (yMax - yMin) * 0.1);
+      const yRange = [yMin - yPad, yMax + yPad];
+
+      drawAxes(ctx, plot, xRange, yRange, 'b (spectral slope)', 'log₁₀(Error)', 6, 5);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      bProfile.forEach((d, i) => {
+        const px = mapX(d.b, xRange, plot);
+        const py = mapY(d.logErr, yRange, plot);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+
+      const grad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.h);
+      grad.addColorStop(0, 'rgba(59,130,246,0.2)');
+      grad.addColorStop(1, 'rgba(59,130,246,0.01)');
+      ctx.lineTo(mapX(bProfile[bProfile.length - 1].b, xRange, plot), plot.y + plot.h);
+      ctx.lineTo(mapX(bProfile[0].b, xRange, plot), plot.y + plot.h);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      const bestPt = bProfile.reduce((a, b) => a.logErr < b.logErr ? a : b);
+      const bx = mapX(bestPt.b, xRange, plot);
+      const byy = mapY(bestPt.logErr, yRange, plot);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, plot.y); ctx.lineTo(bx, plot.y + plot.h); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath(); ctx.arc(bx, byy, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`b = ${bestPt.b.toFixed(2)}`, bx, byy - 10);
+    }
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// IDENTIFIABILITY ASSESSMENT
+// ══════════════════════════════════════════════════════════════════════
+
+function assessIdentifiability(results, bestAnchor) {
+  const secIdent = document.getElementById('sec-identifiability');
+  secIdent.classList.remove('hidden');
+
+  const bestErr = results[0].err;
+  const threshold = bestErr * 10;
+  const nearBest = results.filter(r => r.err < threshold);
+
+  const awVals = nearBest.map(r => r.aw);
+  const fwVals = nearBest.map(r => r.trueFw);
+  const bVals = nearBest.map(r => r.b);
+  const aVals = nearBest.map(r => r.A);
+
+  const awSpread = Math.max(...awVals) - Math.min(...awVals);
+  const fwSpread = Math.max(...fwVals) - Math.min(...fwVals);
+  const bSpread = Math.max(...bVals) - Math.min(...bVals);
+
+  const relAnchorSpread = bestAnchor.medianR !== 0 ? bestAnchor.spreadR / Math.abs(bestAnchor.medianR) : 1;
+
+  let assessment;
+  if (fwSpread < 0.02 && bSpread < 0.5) {
+    assessment = '<span style="color:var(--accent2);">The constrained inversion appears well-resolved. Both AW and b are tightly constrained in the AW–b search.</span>';
+  } else if (fwSpread < 0.03) {
+    assessment = '<span style="color:var(--accent);">Water fraction is relatively well-constrained, but b shows some spread. Consider whether tighter b bounds are justified from prior knowledge.</span>';
+  } else {
+    assessment = '<span style="color:var(--warn);">The solution is broad in AW–b space. The 1650 ratio alone does not sharply constrain the water fraction at this resolution.</span>';
+  }
+
+  let html = '';
+
+  html += `<div style="margin-bottom:12px;">
+    <strong style="color:var(--accent);">Near-optimal solutions</strong> (error &lt; ${threshold.toExponential(2)}):
+    <strong>${nearBest.length}</strong> out of ${results.length.toLocaleString()} grid points.
+  </div>`;
+
+  html += `<div style="margin-bottom:12px;">
+    <strong>AW spread in near-optimal set:</strong>
+    ${Math.min(...awVals).toFixed(4)} → ${Math.max(...awVals).toFixed(4)} (Δ = ${awSpread.toFixed(4)})
+    ${awSpread < 0.02 ? '<span style="color:var(--accent2);">✓ narrow</span>' :
+      awSpread < 0.08 ? '<span style="color:var(--accent);">⚠ moderate</span>' :
+      '<span style="color:var(--warn);">✗ wide</span>'}
+  </div>`;
+
+  html += `<div style="margin-bottom:12px;">
+    <strong>true f_w spread:</strong>
+    ${Math.min(...fwVals).toFixed(4)} → ${Math.max(...fwVals).toFixed(4)} (Δ = ${fwSpread.toFixed(4)})
+    ${fwSpread < 0.02 ? '<span style="color:var(--accent2);">✓ narrow</span>' :
+      fwSpread < 0.08 ? '<span style="color:var(--accent);">⚠ moderate</span>' :
+      '<span style="color:var(--warn);">✗ wide</span>'}
+  </div>`;
+
+  html += `<div style="margin-bottom:12px;">
+    <strong>b spread:</strong>
+    ${Math.min(...bVals).toFixed(3)} → ${Math.max(...bVals).toFixed(3)} (Δ = ${bSpread.toFixed(3)})
+    &nbsp;|&nbsp;
+    <strong>Derived A range:</strong>
+    ${Math.min(...aVals).toFixed(3)} → ${Math.max(...aVals).toFixed(3)}
+  </div>`;
+
+  html += `<div style="margin-bottom:12px;">
+    <strong>1450 anchor quality:</strong>
+    Relative R₁₄₅₀ spread across AW = ${(relAnchorSpread * 100).toFixed(2)}%
+    ${relAnchorSpread < 0.02 ? '<span style="color:var(--accent2);">✓ strong anchor</span>' :
+      relAnchorSpread < 0.10 ? '<span style="color:var(--accent);">⚠ moderate anchor</span>' :
+      '<span style="color:var(--warn);">✗ weak anchor</span>'}
+  </div>`;
+
+  html += `<div style="margin-bottom:12px;"><strong>Assessment:</strong> ${assessment}</div>`;
+
+  html += `<div style="padding:12px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);border-radius:4px;margin-top:16px;">
+    <strong style="color:var(--info);">Method notes:</strong><br>
+    • This constrained inversion uses 1450 as a scattering anchor, then fits AW and b against 1650<br>
+    • A is derived analytically from μ_s'(1450) and b — it is NOT independently searched<br>
+    • The main uncertainty is whether R₁₄₅₀ is truly AW-invariant enough to justify the anchor<br>
+    • If the anchor spread is large, consider using the full blind inversion instead
+  </div>`;
+
+  document.getElementById('ident-notes').innerHTML = html;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// PDF REPORT GENERATION
+// ══════════════════════════════════════════════════════════════════════
+
+function generatePDF() {
+  if (!lastSearchState) {
+    alert('No inversion results to export. Run the inversion first.');
+    return;
+  }
+
+  // ── Check jsPDF availability ──
+  if (typeof window.jspdf === 'undefined' || !window.jspdf || !window.jspdf.jsPDF) {
+    // Try one more time to find it
+    if (typeof jspdf !== 'undefined' && jspdf.jsPDF) {
+      window.jspdf = jspdf;
+    } else {
+      alert(
+        'PDF library (jsPDF) failed to load from CDN.\n\n' +
+        'Possible fixes:\n' +
+        '1. Check your internet connection\n' +
+        '2. Disable ad-blockers for this page\n' +
+        '3. Try refreshing the page\n\n' +
+        'As a workaround, you can copy the structured text dump from the browser console.\n' +
+        '(Press F12 → Console tab)'
+      );
+      // Dump to console as fallback
+      console.log('=== CONSTRAINED INVERSION REPORT (text fallback) ===');
+      console.log(buildStructuredDump(lastSearchState));
+      return;
+    }
+  }
+
+  const S = lastSearchState;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  const W = 215.9, H = 279.4;
+  const margin = 18;
+  const colW = W - 2 * margin;
+  let y = 0;
+
+  const mono = 'courier';
+  const sans = 'helvetica';
+  const lineH = 4.5;
+  const smallH = 3.8;
+
+  function ensureSpace(needed) {
+    if (y + needed > H - 16) { doc.addPage(); y = margin; }
+  }
+
+  function heading(text, size) {
+    ensureSpace(14);
+    doc.setFont(sans, 'bold');
+    doc.setFontSize(size || 13);
+    doc.setTextColor(30, 30, 30);
+    doc.text(text, margin, y);
+    y += (size || 13) * 0.45;
+    doc.setDrawColor(180, 140, 40);
+    doc.setLineWidth(0.4);
+    doc.line(margin, y, W - margin, y);
+    y += 4;
+  }
+
+  function subheading(text) {
+    ensureSpace(10);
+    doc.setFont(sans, 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    doc.text(text, margin, y);
+    y += 5;
+  }
+
+  function textLine(text, indent) {
+    ensureSpace(lineH + 1);
+    doc.setFont(mono, 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(30, 30, 30);
+    const maxW = colW - (indent || 0);
+    const lines = doc.splitTextToSize(String(text), maxW);
+    lines.forEach(line => {
+      ensureSpace(lineH + 1);
+      doc.text(line, margin + (indent || 0), y);
+      y += lineH;
+    });
+  }
+
+  function kvLine(key, val, indent) {
+    ensureSpace(lineH + 1);
+    doc.setFont(mono, 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(80, 80, 80);
+    const keyStr = key + ':';
+    doc.text(keyStr, margin + (indent || 0), y);
+    doc.setFont(mono, 'normal');
+    doc.setTextColor(30, 30, 30);
+    const keyW = doc.getTextWidth(keyStr + '  ');
+    const valStr = String(val);
+    const maxValW = colW - (indent || 0) - keyW;
+    const valLines = doc.splitTextToSize(valStr, maxValW);
+    valLines.forEach((line, i) => {
+      if (i > 0) { ensureSpace(lineH + 1); }
+      doc.text(line, margin + (indent || 0) + keyW, y);
+      if (i < valLines.length - 1) y += lineH;
+    });
+    y += lineH;
+  }
+
+  function blankLine() { y += 2.5; }
+
+  function tableRow(cells, widths, bold, bg) {
+    const rowH = 4.8;
+    ensureSpace(rowH + 1);
+    if (bg) {
+      doc.setFillColor(bg[0], bg[1], bg[2]);
+      doc.rect(margin, y - 3.2, colW, rowH, 'F');
+    }
+    doc.setFont(mono, bold ? 'bold' : 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(30, 30, 30);
+    let x = margin;
+    cells.forEach((cell, i) => {
+      const w = widths[i];
+      if (i === 0) doc.text(String(cell), x + 1, y);
+      else doc.text(String(cell), x + w - 1, y, { align: 'right' });
+      x += w;
+    });
+    y += rowH;
+  }
+
+  const pp = S.params;
+  const best = S.results[0];
+  const bestRes = computeAllSignals(best.aw, best.mus1450, best.mus1650, pp);
+  const Kval = computeK(pp.n);
+
+  // ════════════════════════════════════════
+  // PAGE 1: TITLE & METHOD
+  // ════════════════════════════════════════
+  y = margin;
+  doc.setFont(sans, 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(30, 30, 30);
+  doc.text('1450-Anchored Constrained Inversion', margin, y);
+  y += 8;
+
+  doc.setFont(sans, 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(100, 100, 100);
+  doc.text('SWIR Diffuse-Reflectance Phantom — Two-Stage Constrained Pipeline', margin, y);
+  y += 6;
+
+  doc.setFont(mono, 'normal');
+  doc.setFontSize(8);
+  doc.text('Generated: ' + S.timestamp, margin, y);
+  y += 10;
+
+  // Method box
+  doc.setFillColor(230, 245, 255);
+  doc.setDrawColor(50, 120, 200);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(margin, y, colW, 24, 2, 2, 'FD');
+  y += 5;
+  doc.setFont(sans, 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(30, 80, 180);
+  doc.text('CONSTRAINED INVERSION METHOD', margin + 4, y);
+  y += 4;
+  doc.setFont(sans, 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(40, 60, 80);
+  const methodText =
+    "This is NOT a full blind inversion. " +
+    "Stage 1: Estimate mu_s'(1450) from R_1450 by scanning mu_s' candidates and collapsing across AW (assumed near-invariant). " +
+    "Stage 2: Sweep AW and b, derive A = mu_s'(1450) * 1.45^b analytically, infer mu_s'(1650) = mu_s'(1450) * (1650/1450)^(-b), " +
+    "then fit R_1650. The main search is over 2 unknowns (AW, b), not 3.";
+  const methodLines = doc.splitTextToSize(methodText, colW - 8);
+  doc.text(methodLines, margin + 4, y);
+  y += methodLines.length * 3.5 + 6;
+
+  // ════════════════════════════════════════
+  // SECTION 1: MEASUREMENT INPUTS
+  // ════════════════════════════════════════
+  heading('1. MEASUREMENT INPUTS');
+
+  subheading('Raw PTFE-Normalised Signals');
+  kvLine('1450 Far (7mm)',     isNaN(S.signals.sig1450f) ? 'not provided' : S.signals.sig1450f, 2);
+  kvLine('1450 Close (4.5mm)', isNaN(S.signals.sig1450c) ? 'not provided' : S.signals.sig1450c, 2);
+  kvLine('1650 Far (7mm)',     isNaN(S.signals.sig1650f) ? 'not provided' : S.signals.sig1650f, 2);
+  kvLine('1650 Close (4.5mm)', isNaN(S.signals.sig1650c) ? 'not provided' : S.signals.sig1650c, 2);
+  blankLine();
+
+  subheading('Computed Far/Close Ratios');
+  kvLine('Ratio 1450 (far/close)', S.r1450_meas.toFixed(9), 2);
+  kvLine('Ratio 1650 (far/close)', S.r1650_meas.toFixed(9), 2);
+  kvLine('ln(Ratio 1450)', Math.log(S.r1450_meas).toFixed(8), 2);
+  kvLine('ln(Ratio 1650)', Math.log(S.r1650_meas).toFixed(8), 2);
+  blankLine();
+
+  subheading('Recipe Bookkeeping');
+  kvLine('IL20 stock loading', pp.ilStock, 2);
+  kvLine('Water fraction in IL stock', pp.ilWaterFrac, 2);
+  kvLine('Stock-water contribution', (pp.ilStock * pp.ilWaterFrac).toFixed(6), 2);
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 2: FORWARD MODEL PARAMETERS
+  // ════════════════════════════════════════
+  heading('2. FORWARD MODEL PARAMETERS');
+
+  subheading('Geometry');
+  kvLine('rho_close', pp.rhoClose + ' cm', 2);
+  kvLine('rho_far', pp.rhoFar + ' cm', 2);
+  kvLine('rho_0', pp.rho0 + ' cm', 2);
+  kvLine('gamma_1450', pp.gamma1450, 2);
+  kvLine('gamma_1650', pp.gamma1650, 2);
+  kvLine('n (refractive index)', pp.n, 2);
+  kvLine('C (gain, 1450)', pp.gain, 2);
+  blankLine();
+
+  subheading('Extinction Coefficients (cm^-1)');
+  kvLine('eps_water_1450', pp.ew1450, 2);
+  kvLine('eps_water_1650', pp.ew1650, 2);
+  kvLine('eps_lipid_1450', pp.eil1450, 2);
+  kvLine('eps_lipid_1650', pp.eil1650, 2);
+  kvLine('eps_gel_1450', pp.eg1450, 2);
+  kvLine('eps_gel_1650', pp.eg1650, 2);
+  blankLine();
+
+  subheading('Derived Constants');
+  kvLine('K (boundary coeff at n=' + pp.n + ')', Kval.toFixed(8), 2);
+  kvLine('eff_rho_close_1450', (pp.rhoClose * pp.gamma1450 + pp.rho0).toFixed(6) + ' cm', 2);
+  kvLine('eff_rho_far_1450', (pp.rhoFar * pp.gamma1450 + pp.rho0).toFixed(6) + ' cm', 2);
+  kvLine('eff_rho_close_1650', (pp.rhoClose * pp.gamma1650 + pp.rho0).toFixed(6) + ' cm', 2);
+  kvLine('eff_rho_far_1650', (pp.rhoFar * pp.gamma1650 + pp.rho0).toFixed(6) + ' cm', 2);
+  blankLine();
+
+  subheading('Forward Model Equations');
+  textLine("mu_s'(lambda) = A * (lambda_um)^(-b)", 2);
+  textLine("A = mu_s'(1450) * (1.45)^b     [derived from anchor + b]", 2);
+  textLine("mu_s'(1650) = mu_s'(1450) * (1650/1450)^(-b)", 2);
+  textLine('mu_a(lambda) = f_w_true * eps_water + f_gel * eps_gel + f_lipid * eps_lipid', 2);
+  textLine('D = 1 / (3 * mu_s\')', 2);
+  textLine('z0 = 1 / mu_s\'', 2);
+  textLine('zb = 2D / K', 2);
+  textLine('mu_eff = sqrt(3 * mu_a * mu_s\')', 2);
+  textLine('signal = (C / 4*pi*D) * (exp(-mu_eff*r1)/r1 - exp(-mu_eff*r2)/r2)', 2);
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 3: STAGE 1 — 1450 ANCHOR
+  // ════════════════════════════════════════
+  heading('3. STAGE 1 — 1450 SCATTERING ANCHOR');
+
+  subheading('Anchor Search Configuration');
+  kvLine("mu_s'(1450) search range", `${S.anchorBounds.musMin} to ${S.anchorBounds.musMax} cm^-1 (${S.anchorBounds.nMus} steps)`, 2);
+  kvLine('AW grid for collapse', `${S.searchBounds.awMin.toFixed(4)} to ${S.searchBounds.awMax.toFixed(4)} (${S.searchBounds.nAw} steps)`, 2);
+  kvLine('Collapse method', 'Median predicted R_1450 across AW grid', 2);
+  kvLine('Anchor objective', 'E_anchor = [ln(R_1450_meas / R_1450_pred_median)]^2', 2);
+  blankLine();
+
+  subheading('Anchor Result');
+  kvLine("Estimated mu_s'(1450)", S.mus1450_est.toFixed(6) + ' cm^-1', 2);
+  kvLine('Anchor fit error', S.bestAnchor.errVsMeas.toExponential(8), 2);
+  kvLine('sqrt(anchor error)', Math.sqrt(S.bestAnchor.errVsMeas).toExponential(6), 2);
+  kvLine('Measured R_1450', S.r1450_meas.toFixed(9), 2);
+  kvLine('Median predicted R_1450', S.bestAnchor.medianR.toFixed(9), 2);
+  kvLine('Min predicted R_1450 (across AW)', S.bestAnchor.minR.toFixed(9), 2);
+  kvLine('Max predicted R_1450 (across AW)', S.bestAnchor.maxR.toFixed(9), 2);
+  kvLine('Absolute spread (max-min)', S.bestAnchor.spreadR.toExponential(6), 2);
+  const relSpreadPDF = S.bestAnchor.medianR !== 0 ? (S.bestAnchor.spreadR / Math.abs(S.bestAnchor.medianR) * 100) : 0;
+  kvLine('Relative spread', relSpreadPDF.toFixed(4) + '%', 2);
+  blankLine();
+
+  subheading('Anchor Quality Assessment');
+  if (relSpreadPDF < 2) {
+    textLine('EXCELLENT: R_1450 is nearly invariant across AW (<2% spread). Anchor is strong.', 2);
+  } else if (relSpreadPDF < 10) {
+    textLine('MODERATE: R_1450 shows some AW dependence (' + relSpreadPDF.toFixed(1) + '% spread). Anchor is approximate.', 2);
+  } else {
+    textLine('POOR: R_1450 varies significantly across AW (' + relSpreadPDF.toFixed(1) + '% spread). Anchor may be unreliable.', 2);
+  }
+  textLine('Key assumption: The 1450 far/close ratio is dominated by scattering and weakly', 2);
+  textLine('sensitive to absorption (water fraction). This allows independent scattering estimation.', 2);
+  blankLine();
+
+  // Anchor profile table (sampled)
+  subheading("Anchor Profile: mu_s'(1450) vs median R_1450");
+  const apW = [30, 30, 30, 30, 30];
+  tableRow(["mu_s'", 'medianR', 'minR', 'maxR', 'err'], apW, true, [220, 225, 235]);
+  const anchorStep = Math.max(1, Math.floor(S.anchorData.length / 25));
+  for (let i = 0; i < S.anchorData.length; i += anchorStep) {
+    const d = S.anchorData[i];
+    const isBest = Math.abs(d.mus1450 - S.mus1450_est) < 0.001;
+    tableRow([
+      d.mus1450.toFixed(3),
+      d.medianR.toFixed(7),
+      d.minR.toFixed(7),
+      d.maxR.toFixed(7),
+      d.errVsMeas.toExponential(3),
+    ], apW, isBest, isBest ? [240, 250, 230] : null);
+  }
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 4: STAGE 2 — CONSTRAINED SEARCH
+  // ════════════════════════════════════════
+  heading('4. STAGE 2 — CONSTRAINED AW/b SEARCH');
+
+  subheading('Search Configuration');
+  const sb = S.searchBounds;
+  kvLine('AW range', `${sb.awMin.toFixed(4)} to ${sb.awMax.toFixed(4)} (${sb.nAw} steps)`, 2);
+  kvLine('true f_w range', `${(sb.awMin + pp.ilStock * pp.ilWaterFrac).toFixed(4)} to ${(sb.awMax + pp.ilStock * pp.ilWaterFrac).toFixed(4)}`, 2);
+  kvLine('b range', `${sb.bMin.toFixed(4)} to ${sb.bMax.toFixed(4)} (${sb.nB} steps)`, 2);
+  kvLine('Total grid points', (sb.nAw * sb.nB).toLocaleString(), 2);
+  kvLine('Valid evaluated', S.results.length.toLocaleString(), 2);
+  blankLine();
+
+  subheading('Constrained Search Objective');
+  textLine('E = [ln(R_1650_meas / R_1650_pred)]^2', 2);
+  textLine('R_1450 is NOT in the Stage 2 objective — it was consumed by the Stage 1 anchor.', 2);
+  textLine("For each (AW, b) trial: A = mu_s'(1450)_est * 1.45^b  [derived]", 2);
+  textLine("mu_s'(1650) = mu_s'(1450)_est * (1650/1450)^(-b)  [derived]", 2);
+  textLine('mu_a(1650) from recipe-consistent composition at trial AW', 2);
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 5: BEST SOLUTION
+  // ════════════════════════════════════════
+  heading('5. BEST SOLUTION (MINIMUM CONSTRAINED ERROR)');
+
+  subheading('Recovered Parameters');
+  kvLine('AW (search variable)', best.aw.toFixed(8), 2);
+  kvLine('true f_w (total water)', best.trueFw.toFixed(8), 2);
+  kvLine('true f_w (%)', (best.trueFw * 100).toFixed(4) + '%', 2);
+  kvLine('b (spectral slope)', best.b.toFixed(6), 2);
+  kvLine('A (derived amplitude)', best.A.toFixed(6), 2);
+  kvLine('Constrained error E', best.err.toExponential(10), 2);
+  kvLine('sqrt(E)', Math.sqrt(best.err).toExponential(6), 2);
+  blankLine();
+
+  subheading('Derived Optical Properties at Best Solution');
+  kvLine("mu_s'(1450) (cm^-1)", best.mus1450.toFixed(6), 2);
+  kvLine("mu_s'(1650) (cm^-1)", best.mus1650.toFixed(6), 2);
+  kvLine('mu_a(1450) (cm^-1)', best.mua1450.toFixed(6), 2);
+  kvLine('mu_a(1650) (cm^-1)', best.mua1650.toFixed(6), 2);
+  kvLine("mu_s' ratio (1450/1650)", (best.mus1450 / best.mus1650).toFixed(6), 2);
+  blankLine();
+
+  subheading('Composition at Best Solution');
+  kvLine('AW', best.aw.toFixed(6), 2);
+  kvLine('true water fraction', best.trueFw.toFixed(6), 2);
+  kvLine('gelatin fraction', best.gelFrac.toFixed(6), 2);
+  kvLine('lipid fraction', best.lipidFrac.toFixed(6), 2);
+  kvLine('IL stock loading', pp.ilStock.toFixed(6), 2);
+  kvLine('water in stock contribution', (pp.ilStock * pp.ilWaterFrac).toFixed(6), 2);
+  blankLine();
+
+  subheading('Predicted vs Measured Ratios');
+  const lnR1450 = Math.log(S.r1450_meas / bestRes.ratio1450_pred);
+  const lnR1650 = Math.log(S.r1650_meas / best.ratio1650_pred);
+  const cW = [52, 38, 38, 52];
+  tableRow(['Quantity', 'Measured', 'Predicted', 'ln(meas/pred)'], cW, true, [230, 230, 235]);
+  tableRow(['R_1450 (anchor diag)', S.r1450_meas.toFixed(9), bestRes.ratio1450_pred.toFixed(9), lnR1450.toExponential(6)], cW, false);
+  tableRow(['R_1650 (fitted)', S.r1650_meas.toFixed(9), best.ratio1650_pred.toFixed(9), lnR1650.toExponential(6)], cW, false);
+  tableRow(['Constr. E (R1650)', '', '', best.err.toExponential(8)], cW, true, [240, 245, 230]);
+  blankLine();
+
+  subheading('Diffusion Model Intermediates at Best Solution');
+  const D1450 = 1 / (3 * best.mus1450), D1650 = 1 / (3 * best.mus1650);
+  const z0_1450 = 1 / best.mus1450, z0_1650 = 1 / best.mus1650;
+  const zb_1450 = (2 * D1450) / Kval, zb_1650 = (2 * D1650) / Kval;
+  const mueff_1450 = Math.sqrt(3 * best.mua1450 * best.mus1450);
+  const mueff_1650 = Math.sqrt(3 * best.mua1650 * best.mus1650);
+  kvLine('D_1450', D1450.toExponential(6) + ' cm', 2);
+  kvLine('D_1650', D1650.toExponential(6) + ' cm', 2);
+  kvLine('z0_1450', z0_1450.toFixed(6) + ' cm', 2);
+  kvLine('z0_1650', z0_1650.toFixed(6) + ' cm', 2);
+  kvLine('zb_1450', zb_1450.toFixed(6) + ' cm', 2);
+  kvLine('zb_1650', zb_1650.toFixed(6) + ' cm', 2);
+  kvLine('mu_eff_1450', mueff_1450.toFixed(6) + ' cm^-1', 2);
+  kvLine('mu_eff_1650', mueff_1650.toFixed(6) + ' cm^-1', 2);
+  blankLine();
+
+  subheading('Predicted Signals at Best Solution');
+  kvLine('Pred 1450 Close', bestRes.p1450c.toExponential(9), 2);
+  kvLine('Pred 1450 Far', bestRes.p1450f.toExponential(9), 2);
+  kvLine('Pred 1650 Close', bestRes.p1650c.toExponential(9), 2);
+  kvLine('Pred 1650 Far', bestRes.p1650f.toExponential(9), 2);
+  kvLine('Pred Ratio 1450', bestRes.ratio1450_pred.toFixed(9), 2);
+  kvLine('Pred Ratio 1650', bestRes.ratio1650_pred.toFixed(9), 2);
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 6: TOP CANDIDATES
+  // ════════════════════════════════════════
+  heading('6. TOP 40 CANDIDATE SOLUTIONS');
+  textLine('Sorted by ascending constrained error. A is derived from anchor + b, not independently searched.', 2);
+  blankLine();
+
+  const tcW = [8, 16, 16, 12, 16, 20, 20, 20, 20, 30];
+  tableRow(['#', 'AW', 'true_fw', 'b', 'A(der)', "mus'1450", "mus'1650", 'mua_1650', 'pred_R1650', 'Error'], tcW, true, [220, 225, 235]);
+
+  const nCand = Math.min(40, S.results.length);
+  for (let i = 0; i < nCand; i++) {
+    const r = S.results[i];
+    const bg = i === 0 ? [240, 250, 230] : (i % 2 === 0 ? [248, 248, 250] : null);
+    tableRow([
+      i + 1,
+      r.aw.toFixed(4),
+      r.trueFw.toFixed(4),
+      r.b.toFixed(3),
+      r.A.toFixed(3),
+      r.mus1450.toFixed(3),
+      r.mus1650.toFixed(3),
+      r.mua1650.toFixed(4),
+      r.ratio1650_pred.toFixed(6),
+      r.err.toExponential(3),
+    ], tcW, i === 0, bg);
+  }
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 7: IDENTIFIABILITY
+  // ════════════════════════════════════════
+  heading('7. IDENTIFIABILITY ANALYSIS');
+
+  const bestErr = S.results[0].err;
+  const threshold = bestErr * 10;
+  const nearBest = S.results.filter(r => r.err < threshold);
+  const awVals = nearBest.map(r => r.aw);
+  const fwVals = nearBest.map(r => r.trueFw);
+  const bVals = nearBest.map(r => r.b);
+  const aVals = nearBest.map(r => r.A);
+  const awSpread = Math.max(...awVals) - Math.min(...awVals);
+  const fwSpread = Math.max(...fwVals) - Math.min(...fwVals);
+  const bSpread = Math.max(...bVals) - Math.min(...bVals);
+  const aSpread = Math.max(...aVals) - Math.min(...aVals);
+
+  subheading('Near-Optimal Solution Set (error < 10x best)');
+  kvLine('Best error', bestErr.toExponential(8), 2);
+  kvLine('Threshold (10x)', threshold.toExponential(4), 2);
+  kvLine('Near-best count', nearBest.length + ' / ' + S.results.length.toLocaleString() + ' total', 2);
+  blankLine();
+
+  subheading('Parameter Spread in Near-Optimal Set');
+  kvLine('AW range', Math.min(...awVals).toFixed(5) + ' to ' + Math.max(...awVals).toFixed(5) + '  (delta = ' + awSpread.toFixed(5) + ')', 2);
+  kvLine('true f_w range', Math.min(...fwVals).toFixed(5) + ' to ' + Math.max(...fwVals).toFixed(5) + '  (delta = ' + fwSpread.toFixed(5) + ')', 2);
+  kvLine('b range', Math.min(...bVals).toFixed(4) + ' to ' + Math.max(...bVals).toFixed(4) + '  (delta = ' + bSpread.toFixed(4) + ')', 2);
+  kvLine('Derived A range', Math.min(...aVals).toFixed(4) + ' to ' + Math.max(...aVals).toFixed(4) + '  (delta = ' + aSpread.toFixed(4) + ')', 2);
+  blankLine();
+
+  subheading('Assessment');
+  if (fwSpread < 0.02 && bSpread < 0.5) {
+    textLine('WELL-CONSTRAINED: Both AW/true_fw and b are tightly resolved in the constrained search.', 2);
+    textLine('The water fraction estimate should be reliable if the 1450 anchor assumption holds.', 2);
+  } else if (fwSpread < 0.03) {
+    textLine('PARTIALLY CONSTRAINED: AW/true_fw is reasonably constrained but b shows spread.', 2);
+    textLine('Consider whether tighter b bounds from prior knowledge would help.', 2);
+  } else {
+    textLine('BROAD: Multiple AW/b combinations fit the 1650 ratio comparably well.', 2);
+    textLine('The water fraction is not sharply constrained. Consider additional measurements or constraints.', 2);
+  }
+  blankLine();
+
+  kvLine('1450 anchor quality', relSpreadPDF.toFixed(2) + '% relative R_1450 spread across AW', 2);
+  if (relSpreadPDF < 2) {
+    textLine('Anchor is STRONG. The "water-insensitive" assumption is well-justified.', 2);
+  } else if (relSpreadPDF < 10) {
+    textLine('Anchor is MODERATE. Some systematic bias may be introduced.', 2);
+  } else {
+    textLine('Anchor is WEAK. Results should be interpreted with significant caution.', 2);
+  }
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 8: MARGINAL ERROR PROFILES
+  // ════════════════════════════════════════
+  heading('8. MARGINAL ERROR PROFILES');
+
+  subheading('Min Error vs AW');
+  const mepW = [25, 25, 35, 35];
+  tableRow(['AW', 'true_fw', 'min(Error)', 'log10(minE)'], mepW, true, [220, 225, 235]);
+  for (let i = 0; i < S.awArr.length; i++) {
+    let mn = Infinity;
+    for (let j = 0; j < S.bArr.length; j++) {
+      if (S.errGrid[i][j] < mn) mn = S.errGrid[i][j];
+    }
+    const comp = computeCompositionFromAW(S.awArr[i], pp);
+    if (isFinite(mn) && mn > 0) {
+      tableRow([
+        S.awArr[i].toFixed(4),
+        comp.trueFw.toFixed(4),
+        mn.toExponential(6),
+        Math.log10(mn).toFixed(4),
+      ], mepW, false);
+    }
+  }
+  blankLine();
+
+  subheading('Min Error vs b');
+  const bpW = [25, 35, 35, 25];
+  tableRow(['b', 'min(Error)', 'log10(minE)', 'bestAW'], bpW, true, [220, 225, 235]);
+  for (let j = 0; j < S.bArr.length; j++) {
+    let mn = Infinity;
+    let bestAwIdx = 0;
+    for (let i = 0; i < S.awArr.length; i++) {
+      if (S.errGrid[i][j] < mn) { mn = S.errGrid[i][j]; bestAwIdx = i; }
+    }
+    if (isFinite(mn) && mn > 0) {
+      tableRow([
+        S.bArr[j].toFixed(3),
+        mn.toExponential(6),
+        Math.log10(mn).toFixed(4),
+        S.awArr[bestAwIdx].toFixed(4),
+      ], bpW, false);
+    }
+  }
+  blankLine();
+
+  // ════════════════════════════════════════
+  // SECTION 9: MACHINE-READABLE DATA DUMP
+  // ════════════════════════════════════════
+  heading('9. MACHINE-READABLE STRUCTURED DATA DUMP');
+  textLine('This section is designed for automated parsing by AI or scripts.', 2);
+  textLine('All key-value pairs use FIELD: VALUE format. Tables use CSV-style rows.', 2);
+  blankLine();
+
+  const dump = buildStructuredDump(S);
+  const dumpLines = dump.split('\n');
+  doc.setFont(mono, 'normal');
+  doc.setFontSize(7);
+  dumpLines.forEach(line => {
+    ensureSpace(smallH + 0.5);
+    doc.setTextColor(30, 30, 30);
+    doc.text(line.substring(0, 120), margin, y);
+    y += smallH;
+  });
+
+  // ═══ FOOTER ═══
+  const totalPages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFont(mono, 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    doc.text('1450-Anchored Constrained Inversion | Page ' + i + ' / ' + totalPages, margin, H - 8);
+    doc.text(S.timestamp, W - margin, H - 8, { align: 'right' });
+  }
+
+  doc.save('constrained_inversion_' + S.timestamp.slice(0, 10) + '.pdf');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// BUILD STRUCTURED DATA DUMP (used by PDF and console fallback)
+// ══════════════════════════════════════════════════════════════════════
+
+function buildStructuredDump(S) {
+  const pp = S.params;
+  const best = S.results[0];
+  const bestRes = computeAllSignals(best.aw, best.mus1450, best.mus1650, pp);
+  const Kval = computeK(pp.n);
+  const bestErr = best.err;
+  const threshold = bestErr * 10;
+  const nearBest = S.results.filter(r => r.err < threshold);
+  const relSpread = S.bestAnchor.medianR !== 0 ? (S.bestAnchor.spreadR / Math.abs(S.bestAnchor.medianR) * 100) : 0;
+
+  let d = '';
+  d += '--- BEGIN STRUCTURED DUMP ---\n';
+  d += 'TOOL: 1450-Anchored Constrained Inversion Pipeline v2.0\n';
+  d += 'METHOD: Two-stage constrained (NOT blind 3-parameter)\n';
+  d += 'TIMESTAMP: ' + S.timestamp + '\n';
+  d += '\n';
+  d += '## MEASUREMENTS\n';
+  d += 'SIGNAL_1450_FAR: ' + (isNaN(S.signals.sig1450f) ? 'NaN' : S.signals.sig1450f) + '\n';
+  d += 'SIGNAL_1450_CLOSE: ' + (isNaN(S.signals.sig1450c) ? 'NaN' : S.signals.sig1450c) + '\n';
+  d += 'SIGNAL_1650_FAR: ' + (isNaN(S.signals.sig1650f) ? 'NaN' : S.signals.sig1650f) + '\n';
+  d += 'SIGNAL_1650_CLOSE: ' + (isNaN(S.signals.sig1650c) ? 'NaN' : S.signals.sig1650c) + '\n';
+  d += 'RATIO_1450: ' + S.r1450_meas + '\n';
+  d += 'RATIO_1650: ' + S.r1650_meas + '\n';
+  d += 'LN_RATIO_1450: ' + Math.log(S.r1450_meas) + '\n';
+  d += 'LN_RATIO_1650: ' + Math.log(S.r1650_meas) + '\n';
+  d += '\n';
+  d += '## RECIPE\n';
+  d += 'IL_STOCK_LOADING: ' + pp.ilStock + '\n';
+  d += 'WATER_FRAC_IN_IL_STOCK: ' + pp.ilWaterFrac + '\n';
+  d += 'STOCK_WATER_CONTRIBUTION: ' + (pp.ilStock * pp.ilWaterFrac) + '\n';
+  d += '\n';
+  d += '## FORWARD MODEL\n';
+  d += 'RHO_CLOSE: ' + pp.rhoClose + '\n';
+  d += 'RHO_FAR: ' + pp.rhoFar + '\n';
+  d += 'RHO_0: ' + pp.rho0 + '\n';
+  d += 'GAMMA_1450: ' + pp.gamma1450 + '\n';
+  d += 'GAMMA_1650: ' + pp.gamma1650 + '\n';
+  d += 'GAIN_C: ' + pp.gain + '\n';
+  d += 'N_REFR: ' + pp.n + '\n';
+  d += 'K_BOUNDARY: ' + Kval + '\n';
+  d += 'EPS_WATER_1450: ' + pp.ew1450 + '\n';
+  d += 'EPS_WATER_1650: ' + pp.ew1650 + '\n';
+  d += 'EPS_LIPID_1450: ' + pp.eil1450 + '\n';
+  d += 'EPS_LIPID_1650: ' + pp.eil1650 + '\n';
+  d += 'EPS_GEL_1450: ' + pp.eg1450 + '\n';
+  d += 'EPS_GEL_1650: ' + pp.eg1650 + '\n';
+  d += '\n';
+  d += '## STAGE 1 ANCHOR\n';
+  d += 'ANCHOR_MUS_MIN: ' + S.anchorBounds.musMin + '\n';
+  d += 'ANCHOR_MUS_MAX: ' + S.anchorBounds.musMax + '\n';
+  d += 'ANCHOR_MUS_STEPS: ' + S.anchorBounds.nMus + '\n';
+  d += 'ANCHOR_MUS1450_EST: ' + S.mus1450_est + '\n';
+  d += 'ANCHOR_FIT_ERROR: ' + S.bestAnchor.errVsMeas + '\n';
+  d += 'ANCHOR_MEDIAN_R1450: ' + S.bestAnchor.medianR + '\n';
+  d += 'ANCHOR_MIN_R1450: ' + S.bestAnchor.minR + '\n';
+  d += 'ANCHOR_MAX_R1450: ' + S.bestAnchor.maxR + '\n';
+  d += 'ANCHOR_SPREAD_ABS: ' + S.bestAnchor.spreadR + '\n';
+  d += 'ANCHOR_SPREAD_REL_PCT: ' + relSpread + '\n';
+  d += '\n';
+  d += '## STAGE 2 SEARCH\n';
+  d += 'SEARCH_AW_MIN: ' + S.searchBounds.awMin + '\n';
+  d += 'SEARCH_AW_MAX: ' + S.searchBounds.awMax + '\n';
+  d += 'SEARCH_AW_STEPS: ' + S.searchBounds.nAw + '\n';
+  d += 'SEARCH_B_MIN: ' + S.searchBounds.bMin + '\n';
+  d += 'SEARCH_B_MAX: ' + S.searchBounds.bMax + '\n';
+  d += 'SEARCH_B_STEPS: ' + S.searchBounds.nB + '\n';
+  d += 'SEARCH_TOTAL_VALID: ' + S.results.length + '\n';
+  d += 'SEARCH_OBJECTIVE: E = [ln(R1650_meas / R1650_pred)]^2\n';
+  d += '\n';
+  d += '## BEST SOLUTION\n';
+  d += 'BEST_AW: ' + best.aw + '\n';
+  d += 'BEST_TRUE_FW: ' + best.trueFw + '\n';
+  d += 'BEST_B: ' + best.b + '\n';
+  d += 'BEST_A_DERIVED: ' + best.A + '\n';
+  d += 'BEST_MUS_1450: ' + best.mus1450 + '\n';
+  d += 'BEST_MUS_1650: ' + best.mus1650 + '\n';
+  d += 'BEST_MUA_1450: ' + best.mua1450 + '\n';
+  d += 'BEST_MUA_1650: ' + best.mua1650 + '\n';
+  d += 'BEST_GEL_FRAC: ' + best.gelFrac + '\n';
+  d += 'BEST_LIPID_FRAC: ' + best.lipidFrac + '\n';
+  d += 'BEST_PRED_R1450: ' + bestRes.ratio1450_pred + '\n';
+  d += 'BEST_PRED_R1650: ' + best.ratio1650_pred + '\n';
+  d += 'BEST_ERROR: ' + best.err + '\n';
+  d += 'BEST_LN_R1450_RESIDUAL: ' + Math.log(S.r1450_meas / bestRes.ratio1450_pred) + '\n';
+  d += 'BEST_LN_R1650_RESIDUAL: ' + Math.log(S.r1650_meas / best.ratio1650_pred) + '\n';
+  d += '\n';
+  d += '## DIFFUSION INTERMEDIATES AT BEST\n';
+  const D1450 = 1 / (3 * best.mus1450), D1650 = 1 / (3 * best.mus1650);
+  d += 'D_1450: ' + D1450 + '\n';
+  d += 'D_1650: ' + D1650 + '\n';
+  d += 'Z0_1450: ' + (1 / best.mus1450) + '\n';
+  d += 'Z0_1650: ' + (1 / best.mus1650) + '\n';
+  d += 'ZB_1450: ' + ((2 * D1450) / Kval) + '\n';
+  d += 'ZB_1650: ' + ((2 * D1650) / Kval) + '\n';
+  d += 'MU_EFF_1450: ' + Math.sqrt(3 * best.mua1450 * best.mus1450) + '\n';
+  d += 'MU_EFF_1650: ' + Math.sqrt(3 * best.mua1650 * best.mus1650) + '\n';
+  d += '\n';
+  d += '## IDENTIFIABILITY\n';
+  d += 'IDENT_THRESHOLD: ' + threshold + '\n';
+  d += 'IDENT_NEAR_BEST_COUNT: ' + nearBest.length + '\n';
+  d += 'IDENT_AW_SPREAD: ' + (Math.max(...nearBest.map(r=>r.aw)) - Math.min(...nearBest.map(r=>r.aw))) + '\n';
+  d += 'IDENT_FW_SPREAD: ' + (Math.max(...nearBest.map(r=>r.trueFw)) - Math.min(...nearBest.map(r=>r.trueFw))) + '\n';
+  d += 'IDENT_B_SPREAD: ' + (Math.max(...nearBest.map(r=>r.b)) - Math.min(...nearBest.map(r=>r.b))) + '\n';
+  d += 'IDENT_A_SPREAD: ' + (Math.max(...nearBest.map(r=>r.A)) - Math.min(...nearBest.map(r=>r.A))) + '\n';
+  d += '\n';
+  d += '## TOP 50 CANDIDATES (AW, trueFw, b, A_derived, mus1450, mus1650, mua1650, predR1650, error)\n';
+  const nDump = Math.min(50, S.results.length);
+  for (let i = 0; i < nDump; i++) {
+    const r = S.results[i];
+    d += `  ${i+1}: ${r.aw}, ${r.trueFw}, ${r.b}, ${r.A}, ${r.mus1450}, ${r.mus1650}, ${r.mua1650}, ${r.ratio1650_pred}, ${r.err}\n`;
+  }
+  d += '\n';
+  d += '--- END STRUCTURED DUMP ---\n';
+  return d;
+}
+</script>
+<script>
+// ── jsPDF load status checker ──
+(function checkJsPDF() {
+  const el = document.getElementById('jspdf-status');
+  if (!el) return;
+  function update() {
+    if (window.jspdf && window.jspdf.jsPDF) {
+      el.innerHTML = '<span style="color:var(--accent2);">✓ PDF library loaded successfully</span>';
+    } else if (window._jspdfFailed) {
+      el.innerHTML = '<span style="color:var(--warn);">✗ PDF library failed to load from CDN. Check internet connection or disable ad-blockers. Console fallback available.</span>';
+    } else {
+      el.innerHTML = '<span style="color:var(--text-dim);">⏳ Loading PDF library…</span>';
+      setTimeout(update, 500);
+    }
+  }
+  // Start checking after a short delay
+  setTimeout(update, 800);
+})();
+</script>
+</body>
+</html>
