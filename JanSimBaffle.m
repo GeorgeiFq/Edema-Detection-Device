@@ -191,8 +191,8 @@ nSDS       = numel(SDSlist_cm);
 STATS = struct();
 STATS.targetRelSE = 0.03;      % target relative standard error ~3% (p small -> Poisson)
 STATS.minNdet     = 5000;      % minimum detected photons per point (if physically achievable)
-STATS.N_start     = 2e6;       % starting photons per point
-STATS.N_cap       = 2e9;       % hard cap (adjust if needed)
+STATS.N_start     = 2e9;       % starting photons per point
+STATS.N_cap       = 2e10;       % hard cap (adjust if needed)
 STATS.maxIter     = 7;         % max adaptive reruns per point
 STATS.growFactor  = 4.0;       % minimum growth factor when increasing N
 
